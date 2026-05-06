@@ -1,15 +1,15 @@
-## Product: This is a dataone tagline for the product
+## DataONE Auth Library for python services
 
-- **Authors**: Last, First (ORCID); ...
+- **Authors**: Rushiraj Nenuji, (ORCID); Matthew B. Jones (ORCID); and Jeanette Clark (ORCID)
 - **License**: [Apache 2](http://opensource.org/licenses/Apache-2.0)
-- [Package source code on GitHub](https://github.com/DataONEorg/reponame)
-- [**Submit Bugs and feature requests**](https://github.com/DataONEorg/reponame/issues)
+- [Package source code on GitHub](https://github.com/DataONEorg/dataone-auth)
+- [**Submit Bugs and feature requests**](https://github.com/DataONEorg/dataone-auth/issues)
 - Contact us: support@dataone.org
 - [DataONE discussions](https://github.com/DataONEorg/dataone/discussions)
 
 *Product overview goes here.* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-DataONE in general, and HashStore in particular, are open source, community projects.  We [welcome contributions](./CONTRIBUTING.md) in many forms, including code, graphics, documentation, bug reports, testing, etc.  Use the [DataONE discussions](https://github.com/DataONEorg/dataone/discussions) to discuss these contributions with us.
+DataONE creates open source, community projects.  We [welcome contributions](./CONTRIBUTING.md) in many forms, including code, graphics, documentation, bug reports, testing, etc.  Use the [DataONE discussions](https://github.com/DataONEorg/dataone/discussions) to discuss these contributions with us.
 
 
 ## Documentation
@@ -18,18 +18,16 @@ Documentation is a work in progress, and can be found ...
 
 ## Development build
 
-This is a python package, and built using the [Python Poetry](https://python-poetry.org) build tool.
+This is a python package, and built using the [uv](https://uv-astral.sh) build tool, among others.
 
-To install locally, create a virtual environment for python 3.9+, 
-install poetry, and then install or build the package with `poetry install` or `poetry build`, respectively.
+To install locally, create a virtual environment for python.
+Install `uv`, and then sync the package dependencies with `uv sync`.
 
-To run tests, navigate to the root directory and run `pytest -s`. The test suite contains tests that
-take a longer time to run (relating to the storage of large files) - to execute all tests, run
-`pytest --run-slow`. To see detailed
+To run tests, navigate to the root directory and run `pytest -s`. 
 
 ## Usage Example
 
-To view more details about the Public API - see 'hashstore.py` interface documentation
+To view more details about the Public API - see interface documentation
 
 ```py
 from product import Product
