@@ -1,19 +1,31 @@
-"""Tests for the authentication module."""
+"""Unit tests for auth.py helpers."""
 
-from dataone.auth import _echo_inputs
+from dataone.auth import extract_orcid
 
 
-class TestEchoInputs:
-    """Test suite for _echo_inputs function."""
+def test_extract_orcid_returns_https_uri_from_https_orcid_claim():
+    """Test that extract_orcid returns the canonical HTTPS URI when the orcid claim is already a full HTTPS URI."""
+    claims = {"orcid": "https://orcid.org/0000-0002-1825-0097"}
+    assert extract_orcid(claims) == "https://orcid.org/0000-0002-1825-0097"
 
-    def test_echo_inputs_returns_same_value(self) -> None:
-        """Test that _echo_inputs returns the input value unchanged."""
-        assert _echo_inputs(42) == 42
 
-    def test_echo_inputs_zero(self) -> None:
-        """Test _echo_inputs with zero."""
-        assert _echo_inputs(0) == 0
+def test_extract_orcid_normalises_http_orcid_claim_to_https():
+    """Test that extract_orcid upgrades an http:// orcid claim URI to the canonical https:// URI."""
+    claims = {"orcid": "http://orcid.org/0000-0002-1825-0097"}
+    assert extract_orcid(claims) == "https://orcid.org/0000-0002-1825-0097"
 
-    def test_echo_inputs_negative(self) -> None:
-        """Test _echo_inputs with negative integer."""
-        assert _echo_inputs(-5) == -5
+
+def test_extract_orcid_normalises_bare_id_to_https_uri():
+    """Test that extract_orcid expands a bare ORCID iD to the canonical HTTPS URI."""
+    claims = {"orcid": "0000-0002-1825-0097"}
+    assert extract_orcid(claims) == "https://orcid.org/0000-0002-1825-0097"
+
+
+def test_extract_orcid_returns_none_for_none_input():
+    """Test that extract_orcid returns None when called with None instead of a claims dict."""
+    assert extract_orcid(None) is None
+
+
+def test_extract_orcid_returns_none_for_empty_claims():
+    """Test that extract_orcid returns None when called with an empty claims dict."""
+    assert extract_orcid({}) is None
