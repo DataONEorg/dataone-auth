@@ -1,4 +1,4 @@
-## DataONE Auth Library for python services
+# DataONE Auth Library for python services
 
 - **Authors**: Rushiraj Nenuji, (ORCID); Matthew B. Jones (ORCID); and Jeanette Clark (ORCID)
 - **License**: [Apache 2](http://opensource.org/licenses/Apache-2.0)
@@ -11,7 +11,6 @@
 
 DataONE creates open source, community projects.  We [welcome contributions](./CONTRIBUTING.md) in many forms, including code, graphics, documentation, bug reports, testing, etc.  Use the [DataONE discussions](https://github.com/DataONEorg/dataone/discussions) to discuss these contributions with us.
 
-
 ## Documentation
 
 Documentation is a work in progress, and can be found ...
@@ -23,20 +22,31 @@ This is a python package, and built using the [uv](https://uv-astral.sh) build t
 To install locally, create a virtual environment for python.
 Install `uv`, and then sync the package dependencies with `uv sync`.
 
+To install the package:
+```
+pip install dataone-auth
+```
+
+Then import it in your code:
+```python
+import dataone.auth
+```
+
 To run tests, navigate to the root directory and run `pytest -s`. 
 
 ## Usage Example
 
 To view more details about the Public API - see interface documentation
 
-```py
-from product import Product
+```python
+import dataone.auth
 
 # Example code here...
 
 ```
 
 ## License
+
 ```
 Copyright [2024] [Regents of the University of California]
 
@@ -54,6 +64,7 @@ limitations under the License.
 ```
 
 ## Acknowledgements
+
 Work on this package was supported by:
 
 - DataONE Network

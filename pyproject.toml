@@ -1,5 +1,5 @@
 [project]
-name = "dataone"
+name = "dataone-auth"
 version = "0.1.0"
 description = "DataONE OIDC Auth package"
 readme = "README.md"
