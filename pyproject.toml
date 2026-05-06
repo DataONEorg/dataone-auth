@@ -12,9 +12,12 @@ dependencies = []
 [project.scripts]
 dataone = "dataone:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/dataone"]
+
 [build-system]
-requires = ["uv_build>=0.11.6,<0.12.0"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [

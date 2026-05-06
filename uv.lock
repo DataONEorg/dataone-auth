@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dataone"
+name = "dataone-auth"
 version = "0.1.0"
 source = { editable = "." }
 
