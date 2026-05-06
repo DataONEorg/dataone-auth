@@ -1,6 +1,6 @@
 # DataONE Auth Library for python services
 
-- **Authors**: Rushiraj Nenuji, (ORCID); Matthew B. Jones (ORCID); and Jeanette Clark (ORCID)
+- **Authors**: Rushiraj Nenuji, [0000-0003-4678-5213](https://orcid.org/0000-0003-4678-5213); Matthew B. Jones [0000-0003-0077-4738](https://orcid.org/0000-0003-0077-4738); and Jeanette Clark [0000-0003-4703-1974](https://orcid.org/0000-0003-4703-1974)
 - **License**: [Apache 2](http://opensource.org/licenses/Apache-2.0)
 - [Package source code on GitHub](https://github.com/DataONEorg/dataone-auth)
 - [**Submit Bugs and feature requests**](https://github.com/DataONEorg/dataone-auth/issues)
@@ -20,19 +20,22 @@ Documentation is a work in progress, and can be found ...
 This is a python package, and built using the [uv](https://uv-astral.sh) build tool, among others.
 
 To install locally, create a virtual environment for python.
-Install `uv`, and then sync the package dependencies with `uv sync`.
+Install `uv`, and then sync the package dependencies:
 
-To install the package:
-```
-pip install dataone-auth
-```
+- `uv sync`.
 
 Then import it in your code:
 ```python
 import dataone.auth
 ```
 
-To run tests, navigate to the root directory and run `pytest -s`. 
+To run tests, navigate to the root directory and run pytest:
+
+- `uv run pytest` 
+
+To run the code formatter and linter, use Ruff:
+
+- `uv run ruff check .`
 
 ## Usage Example
 
