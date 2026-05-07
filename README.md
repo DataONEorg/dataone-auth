@@ -13,7 +13,7 @@ DataONE creates open source, community projects.  We [welcome contributions](./C
 
 ## Documentation
 
-Documentation is a work in progress, and can be found ...
+Documentation is a work in progress, and can be found in [docs](./docs).
 
 ## Development build
 
