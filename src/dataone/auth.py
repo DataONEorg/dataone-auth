@@ -4,6 +4,8 @@ import json
 import requests
 from authlib.jose import jwt, JsonWebKey
 
+MAX_TOKEN_LEN = 16_384
+_DEFAULT_SECRETS_PATH = "./client_secrets.json"
 
 class MissingParameterError(Exception):
     """Raised when a required request parameter is missing."""
