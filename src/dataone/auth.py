@@ -141,7 +141,7 @@ class BaseAuthAdapter:
             client_kwargs={"scope": scope_request}, 
     )
 
-    def get_jwks_keys():
+    def get_jwks_keys(self):
         """Fetch and cache the JWKS signing keys from the OIDC provider.
 
         These keys are used to validate JWT token signatures. Care must be taken to fetch
