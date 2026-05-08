@@ -240,6 +240,8 @@ class BaseAuthAdapter:
         """
         return getattr(self.oauth, name)
 
+# adapters
+
 class FastAPIAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
         from authlib.integrations.starlette_client import OAuth
@@ -249,3 +251,13 @@ class FlaskAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
         from authlib.integrations.flask_client import OAuth
         return OAuth()
+
+# exceptions
+
+class AuthError(Exception):
+    """Base exception for dataone-auth"""
+    pass
+
+class InsufficientScopeError(AuthError):
+    """Raised when the token is valid but doesn't have the right scope"""
+    pass
