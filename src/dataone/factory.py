@@ -7,7 +7,7 @@ class AuthFactory:
     }
 
     @classmethod
-    def create_client(cls, framework: str, config: dict):
+    def create_client(cls, framework: str, secrets: dict, scopes: list):
         import_path = cls._registry.get(framework.lower())
         if not import_path:
             raise ValueError(f"Unsupported framework: {framework}")
@@ -16,4 +16,4 @@ class AuthFactory:
         module = __import__(module_path, fromlist=[class_name])
         AdapterClass = getattr(module, class_name)
         
-        return AdapterClass(config=config)
+        return AdapterClass(secrets=secrets, scopes=scopes)

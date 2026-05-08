@@ -1,6 +1,13 @@
+import os
+
 class BaseAuthAdapter:
-    def __init__(self, config: dict):
-        self.config = config
+
+    DEFAULT_PROVIDER_NAME = "vegbank_oidc"
+    DEFAULT_SCOPES = "openid email profile"
+
+    def __init__(self, secrets, scopes):
+        self.secrets = secrets
+        self.scopes = scopes
         self.oauth = self._initialize_oauth()
         self._setup_providers()
 
@@ -8,12 +15,16 @@ class BaseAuthAdapter:
         raise NotImplementedError
 
     def _setup_providers(self):
-        self.register(
-            name="vegbank_oidc",
-            #client_id=secrets.get("client_id"),
-            #client_secret=secrets.get("client_secret"),
-            #server_metadata_url=secrets.get("server_metadata_url"),
-            #client_kwargs={"scope": scope_request},
+
+        base_scopes = self.DEFAULT_SCOPES.split()
+        scope_request = " ".join(dict.fromkeys(base_scopes + self.scopes))
+
+        self.oauth.register(
+            name=self.DEFAULT_PROVIDER_NAME,
+            client_id=self.secrets.get("client_id"),
+            client_secret=self.secrets.get("client_secret"),
+            server_metadata_url=self.secrets.get("server_metadata_url"),
+            client_kwargs={"scope": scope_request}, 
     )
 
     def __getattr__(self, name):
