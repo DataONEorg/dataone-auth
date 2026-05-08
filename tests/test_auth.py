@@ -1,6 +1,6 @@
 """Unit tests for auth.py helpers."""
 
-from dataone.auth import extract_orcid
+from dataone.utils import extract_orcid
 
 
 def test_extract_orcid_returns_https_uri_from_https_orcid_claim():
