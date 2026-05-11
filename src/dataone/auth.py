@@ -36,12 +36,12 @@ def extract_token_from_header(auth_header: str):
     # check there is a token
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
-    
+
+    token = auth_header[7:].strip()
+        
     # make sure it looks like a JWT token
     if token.count('.') != 2:
         return None
-
-    token = auth_header[7:].strip()
 
     # caps the token length to prevent huge tokens from causing DoS issues in downstream processing.
     if len(token) > MAX_TOKEN_LEN:
