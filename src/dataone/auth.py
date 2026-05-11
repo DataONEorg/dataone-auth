@@ -33,7 +33,12 @@ def load_client_secrets(filepath: str | None = None) -> dict:
 def extract_token_from_header(auth_header: str):
     """Extracts and safely bounds a Bearer token from an Authorization header."""
    
+    # check there is a token
     if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    
+    # make sure it looks like a JWT token
+    if token.count('.') != 2:
         return None
 
     token = auth_header[7:].strip()
@@ -219,16 +224,13 @@ class BaseAuthAdapter:
             Exception: JoseError from Authlib if token is invalid/expired.
             InsufficientScopeError: If the token lacks the required scope.
         """
-        # 1. Do the crypto math (the method we wrote previously)
         claims = self.decode_and_validate_token(token_str)
         
-        # 2. Scope check if required
         if required_scope:
             token_scopes = claims.get("scope", "").split()
             if required_scope not in token_scopes:
                 raise InsufficientScopeError(
-                    f"Insufficient scope. Required: {required_scope}. "
-                    f"Available: {' '.join(token_scopes)}"
+                    f"Required: '{target_scope}'. Available: {[s for s in token_scopes]}"
                 )
         
         return claims
