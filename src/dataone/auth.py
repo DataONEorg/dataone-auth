@@ -253,6 +253,63 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         from authlib.integrations.starlette_client import OAuth
         return OAuth()
 
+    async def get_jwks_keys(self):
+        """Async override for fetching JWKS."""
+        if hasattr(self, '_cached_jwks'):
+            return self._cached_jwks
+
+        provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
+        # Starlette requires await here
+        metadata = await provider.load_server_metadata()
+
+        jwks_uri = metadata.get("jwks_uri")
+        if not jwks_uri:
+            raise ValueError("OIDC provider metadata missing 'jwks_uri'")
+
+        # Non-blocking HTTP request
+        async with httpx.AsyncClient() as client:
+            response = await client.get(jwks_uri, timeout=10)
+            response.raise_for_status()
+            
+        self._cached_jwks = JsonWebKey.import_key_set(response.json())
+        return self._cached_jwks
+
+    async def decode_and_validate_token(self, token_str: str):
+        """Async override for decoding."""
+        jwks = await self.get_jwks_keys()
+        
+        provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
+        # Starlette requires await here too
+        metadata = await provider.load_server_metadata()
+        issuer = metadata.get("issuer")
+
+        client_id = self.secrets.get("client_id")
+
+        claims = jwt.decode(
+            token_str,
+            jwks,
+            claims_options={
+                "iss": {"essential": True, "value": issuer},
+                "aud": {"essential": True, "value": client_id},
+                "azp": {"essential": True, "value": client_id},
+            },
+        )
+        claims.validate()
+        return claims
+
+    async def validate_and_extract_claims(self, token_str: str, required_scope: str = None):
+        """Async override for claim extraction."""
+        claims = await self.decode_and_validate_token(token_str)
+        
+        if required_scope:
+            token_scopes = claims.get("scope", "").split()
+            if required_scope not in token_scopes:
+                raise InsufficientScopeError(
+                    f"Required: '{required_scope}'. Available: {[s for s in token_scopes]}"
+                )
+        
+        return claims
+
 class FlaskAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
         from authlib.integrations.flask_client import OAuth
