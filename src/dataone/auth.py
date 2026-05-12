@@ -1,9 +1,11 @@
 import json
 import os
 import re
+import httpx
 
 import requests
 from authlib.jose import JsonWebKey, jwt
+
 
 MAX_TOKEN_LEN = 16_384
 _DEFAULT_SECRETS_PATH = "./client_secrets.json"
