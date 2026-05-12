@@ -123,7 +123,7 @@ class AuthFactory:
 
 class BaseAuthAdapter:
 
-    DEFAULT_PROVIDER_NAME = "vegbank_oidc"
+    DEFAULT_PROVIDER_NAME = "dataone_oidc"
     DEFAULT_SCOPES = "openid email profile"
 
     def __init__(self, secrets, scopes):
