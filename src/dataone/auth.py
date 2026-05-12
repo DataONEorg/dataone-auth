@@ -95,7 +95,7 @@ def get_access_mode() -> str:
     Returns:
         str: One of 'read_only', 'open', or 'authenticated'. Defaults to 'authenticated'.
     """
-    mode = os.getenv("VB_ACCESS_MODE", ACCESS_MODE_AUTHENTICATED).lower()
+    mode = os.getenv("ACCESS_MODE", "authenticated").lower()
     if mode not in (ACCESS_MODE_READ_ONLY, ACCESS_MODE_OPEN, ACCESS_MODE_AUTHENTICATED):
         logger.warning(f"Invalid access mode '{mode}', falling back to '{ACCESS_MODE_AUTHENTICATED}'")
         return ACCESS_MODE_AUTHENTICATED
