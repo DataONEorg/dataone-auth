@@ -7,6 +7,10 @@ from authlib.jose import jwt, JsonWebKey
 MAX_TOKEN_LEN = 16_384
 _DEFAULT_SECRETS_PATH = "./client_secrets.json"
 
+ACCESS_MODE_AUTHENTICATED = "authenticated"
+ACCESS_MODE_READ_ONLY = "read_only"
+ACCESS_MODE_OPEN = "open"
+
 class MissingParameterError(Exception):
     """Raised when a required request parameter is missing."""
 
