@@ -1,8 +1,9 @@
+import json
 import os
 import re
-import json
+
 import requests
-from authlib.jose import jwt, JsonWebKey
+from authlib.jose import JsonWebKey, jwt
 
 MAX_TOKEN_LEN = 16_384
 _DEFAULT_SECRETS_PATH = "./client_secrets.json"
@@ -31,7 +32,7 @@ def load_client_secrets(filepath: str | None = None) -> dict:
         or os.getenv("OIDC_CLIENT_SECRETS_FILE")
         or _DEFAULT_SECRETS_PATH
     )
-    with open(resolved, "r") as f:
+    with open(resolved) as f:
         return json.load(f)
 
 def extract_token_from_header(auth_header: str):
