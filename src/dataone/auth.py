@@ -230,7 +230,7 @@ class BaseAuthAdapter:
             token_scopes = claims.get("scope", "").split()
             if required_scope not in token_scopes:
                 raise InsufficientScopeError(
-                    f"Required: '{target_scope}'. Available: {[s for s in token_scopes]}"
+                    f"Required: '{required_scope}'. Available: {[s for s in token_scopes]}"
                 )
         
         return claims
