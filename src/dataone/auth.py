@@ -313,6 +313,22 @@ class BaseAuthAdapter:
         
         return claims
 
+    def login(self, redirect_uri: str):
+        raise NotImplementedError
+
+    def authorize(self):
+        raise NotImplementedError
+
+    def refresh(self, request_json: dict):
+
+        refresh_token = request_json.get("refresh_token")
+        if not refresh_token:
+            raise TokenExtractionError("Missing refresh_token in request body")
+        
+        scope = request_json.get("scope")
+        # Call the specific implementation's fetch method
+        return self._do_refresh(refresh_token, scope)
+
     def __getattr__(self, name):
         """
         Delegate all unknown attribute/method lookups to the underlying Authlib OAut
@@ -412,6 +428,43 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
                 )
         
         return claims
+    
+    async def login(self, redirect_uri: str):
+        """Returns a Starlette/FastAPI RedirectResponse."""
+        # The Starlette client's authorize_redirect is async
+        return await self.dataone_oidc.authorize_redirect(redirect_uri)
+
+    async def authorize(self):
+        """Exchanges code for token and returns a JSONResponse."""
+        try:
+            # Must await the token exchange in FastAPI
+            token = await self.dataone_oidc.authorize_access_token()
+            return self.token_response(token)
+        except Exception as e:
+            return self.error_handler(e)
+
+    async def refresh(self, request_json: dict):
+        """Logic to handle refresh token exchange."""
+        refresh_token = request_json.get("refresh_token")
+        if not refresh_token:
+            # This triggers our mapped TokenExtractionError (401)
+            return self.error_handler(TokenExtractionError("Missing refresh_token"))
+        
+        scope = request_json.get("scope")
+        
+        try:
+            kwargs = {
+                "grant_type": "refresh_token", 
+                "refresh_token": refresh_token
+            }
+            if scope:
+                kwargs["scope"] = scope
+                
+            # The Starlette fetch_access_token is async
+            new_tokens = await self.dataone_oidc.fetch_access_token(**kwargs)
+            return self.token_response(new_tokens, message="Token refresh successful")
+        except Exception as e:
+            return self.error_handler(e)
 
 class FlaskAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
@@ -437,4 +490,24 @@ class FlaskAuthAdapter(BaseAuthAdapter):
                 "refresh_token": token.get("refresh_token"),
             }
         }), 200
+
+    def login(self, redirect_uri: str):
+        return self.dataone_oidc.authorize_redirect(redirect_uri)
+
+    def authorize(self):
+        try:
+            token = self.dataone_oidc.authorize_access_token()
+            return self.token_response(token)
+        except Exception as e:
+            return self.error_handler(e)
+
+    def _do_refresh(self, refresh_token, scope=None):
+        try:
+            kwargs = {"grant_type": "refresh_token", "refresh_token": refresh_token}
+            if scope:
+                kwargs["scope"] = scope
+            new_tokens = self.dataone_oidc.fetch_access_token(**kwargs)
+            return self.token_response(new_tokens)
+        except Exception as e:
+            return self.error_handler(e)
 
