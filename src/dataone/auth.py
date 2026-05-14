@@ -472,8 +472,10 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
     def require_scope(self, required_scope: str):
         """Returns a dependency for FastAPI's Depends()."""
-        async def dependency(request):
+        from fastapi import Request
+        async def dependency(request: Request):
             from fastapi import HTTPException
+            from .auth import extract_token_from_header
             # Handle 'read_only' logic
             if self.access_mode != "authenticated":
                 return None
