@@ -313,10 +313,10 @@ class BaseAuthAdapter:
         
         return claims
 
-    def login(self, redirect_uri: str):
+    def login(self, redirect_uri: str, request=None):
         raise NotImplementedError
 
-    def authorize(self):
+    def authorize(self, request=None):
         raise NotImplementedError
 
     def refresh(self, request_json: dict):
@@ -429,16 +429,16 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         
         return claims
     
-    async def login(self, redirect_uri: str):
+    async def login(self, request, redirect_uri: str):
         """Returns a Starlette/FastAPI RedirectResponse."""
         # The Starlette client's authorize_redirect is async
-        return await self.dataone_oidc.authorize_redirect(redirect_uri)
+        return await self.dataone_oidc.authorize_redirect(request, redirect_uri)
 
-    async def authorize(self):
+    async def authorize(self, request):
         """Exchanges code for token and returns a JSONResponse."""
         try:
             # Must await the token exchange in FastAPI
-            token = await self.dataone_oidc.authorize_access_token()
+            token = await self.dataone_oidc.authorize_access_token(request)
             return self.token_response(token)
         except Exception as e:
             return self.error_handler(e)
