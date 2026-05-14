@@ -168,6 +168,7 @@ class BaseAuthAdapter:
         self.scopes = scopes
         self.oauth = self._initialize_oauth()
         self._setup_providers()
+        self.access_mode = get_access_mode()
 
     def _initialize_oauth(self):
         raise NotImplementedError
