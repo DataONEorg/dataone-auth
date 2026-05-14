@@ -2,13 +2,13 @@ import json
 import os
 import re
 
-import authlib.integrations.base_client.errors as base_client_errors
 import httpx
 import requests
+from authlib.integrations.base_client.errors import OAuthError
 from authlib.jose import JsonWebKey, jwt
-from authlib.oauth2.rfc6749.errors import (
-    OAuth2Error,
-)
+from authlib.jose.errors import BadSignatureError, DecodeError, InvalidTokenError
+from authlib.oauth2 import OAuth2Error
+from authlib.oauth2.rfc6749.errors import InvalidClientError, InvalidGrantError
 from requests import RequestException
 
 ### Params
@@ -175,13 +175,18 @@ class BaseAuthAdapter:
     )
 
     ERROR_MAP = {
+        DecodeError: ("Token decoding failed", 401),
+        InvalidClientError: ("OIDC client authentication failed", 401),
+        InvalidTokenError: ("Token validation failed", 401),
+        InvalidGrantError: ("Invalid or expired refresh token", 401),
+        BadSignatureError: ("Token signature verification failed", 401),
+        OAuthError: ("Authorization failed", 401),
+        OAuth2Error: ("An OAuth2 error occurred", 401),
         KeyError: ("Invalid token structure", 401),
         TypeError: ("Invalid token structure", 401),
+        MissingParameterError: ("Missing required parameter", 400),
         ValueError: ("OIDC provider configuration error", 500),
         RequestException: ("Failed to fetch OIDC provider keys", 502),
-        InsufficientScopeError: ("Insufficient permissions", 403),
-        base_client_errors.OAuthError: ("Authorization failed", 401),
-        OAuth2Error: ("An OAuth2 error occurred", 401),
     }
 
     def _resolve_error(self, exc: Exception):
