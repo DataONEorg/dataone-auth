@@ -1,11 +1,17 @@
 import json
 import os
 import re
-import httpx
 
+import authlib.integrations.base_client.errors as base_client_errors
+import httpx
 import requests
 from authlib.jose import JsonWebKey, jwt
+from authlib.oauth2.rfc6749.errors import (
+    OAuth2Error,
+)
+from requests import RequestException
 
+### Params
 
 MAX_TOKEN_LEN = 16_384
 _DEFAULT_SECRETS_PATH = "./client_secrets.json"
@@ -14,9 +20,23 @@ ACCESS_MODE_AUTHENTICATED = "authenticated"
 ACCESS_MODE_READ_ONLY = "read_only"
 ACCESS_MODE_OPEN = "open"
 
+_ORCID_HTTPS_PREFIX = "https://orcid.org/"
+_ORCID_HTTP_PREFIX = "http://orcid.org/"
+
+### Exceptions
+
 class MissingParameterError(Exception):
     """Raised when a required request parameter is missing."""
 
+class AuthError(Exception):
+    """Base exception for dataone-auth"""
+    pass
+
+class InsufficientScopeError(AuthError):
+    """Raised when the token is valid but doesn't have the right scope"""
+    pass
+
+### Helpers
 
 def load_client_secrets(filepath: str | None = None) -> dict:
     """Load client secrets from a JSON file.
@@ -28,7 +48,8 @@ def load_client_secrets(filepath: str | None = None) -> dict:
     Returns:
         Parsed dict of client credentials.
     """
-    # accept either explicit filepath argument or environment variable, with a default fallback
+    # accept either explicit filepath argument or environment variable, with a default
+    #  fallback
     resolved = (
         filepath
         or os.getenv("OIDC_CLIENT_SECRETS_FILE")
@@ -50,16 +71,13 @@ def extract_token_from_header(auth_header: str):
     if token.count('.') != 2:
         return None
 
-    # caps the token length to prevent huge tokens from causing DoS issues in downstream processing.
+    # caps the token length to prevent huge tokens from causing DoS issues in downstream
+    #  processing.
     if len(token) > MAX_TOKEN_LEN:
         return None
     
     return token
 
-_ORCID_HTTPS_PREFIX = "https://orcid.org/"
-_ORCID_HTTP_PREFIX = "http://orcid.org/"
-
-# leave this in as a helper
 def extract_orcid(claims: dict | None) -> str | None:
     """Extract a normalised ORCID iD URI from JWT claims.
 
@@ -95,18 +113,19 @@ def extract_orcid(claims: dict | None) -> str | None:
 
     return _ORCID_HTTPS_PREFIX + bare
 
-# probably remove
 def get_access_mode() -> str:
     """Get the current access mode from environment.
     
     Returns:
-        str: One of 'read_only', 'open', or 'authenticated'. Defaults to 'authenticated'.
+        str: One of 'read_only', 'open', or 'authenticated'. Defaults to 
+        'authenticated'.
     """
     mode = os.getenv("ACCESS_MODE", "authenticated").lower()
     if mode not in (ACCESS_MODE_READ_ONLY, ACCESS_MODE_OPEN, ACCESS_MODE_AUTHENTICATED):
-        logger.warning(f"Invalid access mode '{mode}', falling back to '{ACCESS_MODE_AUTHENTICATED}'")
         return ACCESS_MODE_AUTHENTICATED
     return mode
+
+### Factory
 
 class AuthFactory:
 
@@ -155,13 +174,47 @@ class BaseAuthAdapter:
             client_kwargs={"scope": scope_request}, 
     )
 
+    ERROR_MAP = {
+        KeyError: ("Invalid token structure", 401),
+        TypeError: ("Invalid token structure", 401),
+        ValueError: ("OIDC provider configuration error", 500),
+        RequestException: ("Failed to fetch OIDC provider keys", 502),
+        InsufficientScopeError: ("Insufficient permissions", 403),
+        base_client_errors.OAuthError: ("Authorization failed", 401),
+        OAuth2Error: ("An OAuth2 error occurred", 401),
+    }
+
+    def _resolve_error(self, exc: Exception):
+        """Logic to determine message and status from an exception."""
+        # Check for specific Authlib errors (handle imports or strings)
+        for exc_type, (msg, code) in self.ERROR_MAP.items():
+            # Parentheses let us wrap this logic across lines cleanly
+            is_match = (
+                isinstance(exc, exc_type) if not isinstance(exc_type, str) 
+                else type(exc).__name__ == exc_type
+            )
+            
+            if is_match:
+                return msg, code
+                
+        return "Internal authentication error", 500
+
+    def error_handler(self, exc: Exception):
+        """This will be implemented by subclasses."""
+        raise NotImplementedError
+
+    def token_response(self, token: dict, message: str):
+        """This will be implemented by subclasses."""
+        raise NotImplementedError
+
     def get_jwks_keys(self):
         """Fetch and cache the JWKS signing keys from the OIDC provider.
 
-        These keys are used to validate JWT token signatures. Care must be taken to fetch
-        them only from trustworthy sources (via the OIDC provider's metadata endpoint over
-        HTTPS). The keys may change periodically, so the cache will be invalidated and keys
-        will be refetched on the next call after the application is restarted.
+        These keys are used to validate JWT token signatures. Care must be taken to 
+        fetch them only from trustworthy sources (via the OIDC provider's metadata 
+        endpoint over HTTPS). The keys may change periodically, so the cache will be
+        invalidated and keys will be refetched on the next call after the application
+        is restarted.
 
         Returns:
             authlib.jose.JsonWebKey: A ``JsonWebKeySet`` ready for ``jwt.decode``.
@@ -194,7 +247,8 @@ class BaseAuthAdapter:
     def decode_and_validate_token(self, token_str: str):
         """Decode *and* full-validate a JWT against the OIDC provider's JWKS.
         
-        Validates signature, issuer (iss), audience (aud), and authorized-party (azp) claims.
+        Validates signature, issuer (iss), audience (aud), and authorized-party (azp)
+         claims.
         """
 
         jwks = self.get_jwks_keys()
@@ -237,24 +291,51 @@ class BaseAuthAdapter:
             token_scopes = claims.get("scope", "").split()
             if required_scope not in token_scopes:
                 raise InsufficientScopeError(
-                    f"Required: '{required_scope}'. Available: {[s for s in token_scopes]}"
+                    f"Required: '{required_scope}'."
+                    "Available: {[s for s in token_scopes]}"
                 )
         
         return claims
 
     def __getattr__(self, name):
         """
-        Delegate all unknown attribute/method lookups to the underlying Authlib OAuth object.
-        This automatically exposes .register(), .init_app(), etc.
+        Delegate all unknown attribute/method lookups to the underlying Authlib OAut
+        object. This automatically exposes .register(), .init_app(), etc.
         """
         return getattr(self.oauth, name)
 
-# adapters
+### Adapters
 
 class FastAPIAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
         from authlib.integrations.starlette_client import OAuth
+        from fastapi.responses import JSONResponse
+        self._response_class = JSONResponse
         return OAuth()
+
+    def error_handler(self, exc: Exception):
+        msg, code = self._resolve_error(exc)
+        return self._response_class(
+            status_code=code,
+            content={
+                "error": {
+                    "message": msg,
+                    "details": str(exc)
+                }
+            }
+        )
+
+    def token_response(self, token: dict, message: str = "Success"):
+        return self._response_class(
+            status_code=200,
+            content={
+                "message": message,
+                "token": {
+                    "access_token": token.get("access_token"),
+                    "refresh_token": token.get("refresh_token"),
+                }
+            }
+        )
 
     async def get_jwks_keys(self):
         """Async override for fetching JWKS."""
@@ -300,7 +381,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         claims.validate()
         return claims
 
-    async def validate_and_extract_claims(self, token_str: str, required_scope: str = None):
+    async def validate_and_extract_claims(self,
+        token_str: str,
+        required_scope: str = None):
         """Async override for claim extraction."""
         claims = await self.decode_and_validate_token(token_str)
         
@@ -308,7 +391,8 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
             token_scopes = claims.get("scope", "").split()
             if required_scope not in token_scopes:
                 raise InsufficientScopeError(
-                    f"Required: '{required_scope}'. Available: {[s for s in token_scopes]}"
+                    f"Required: '{required_scope}'."
+                    "Available: {[s for s in token_scopes]}"
                 )
         
         return claims
@@ -318,12 +402,23 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         from authlib.integrations.flask_client import OAuth
         return OAuth()
 
-# exceptions
+    def error_handler(self, exc: Exception):
+        from flask import jsonify
+        msg, code = self._resolve_error(exc)
+        return jsonify({
+            "error": {
+                "message": msg,
+                "details": str(exc)
+            }
+        }), code
 
-class AuthError(Exception):
-    """Base exception for dataone-auth"""
-    pass
+    def token_response(self, token: dict, message: str = "Success"):
+        from flask import jsonify
+        return jsonify({
+            "message": message,
+            "token": {
+                "access_token": token.get("access_token"),
+                "refresh_token": token.get("refresh_token"),
+            }
+        }), 200
 
-class InsufficientScopeError(AuthError):
-    """Raised when the token is valid but doesn't have the right scope"""
-    pass
