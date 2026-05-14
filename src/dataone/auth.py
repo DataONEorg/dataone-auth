@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import re
@@ -329,6 +330,9 @@ class BaseAuthAdapter:
         # Call the specific implementation's fetch method
         return self._do_refresh(refresh_token, scope)
 
+    def require_scope(self, required_scope: str):
+        raise NotImplementedError
+    
     def __getattr__(self, name):
         """
         Delegate all unknown attribute/method lookups to the underlying Authlib OAut
@@ -466,6 +470,29 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self.error_handler(e)
 
+    def require_scope(self, required_scope: str):
+        """Returns a dependency for FastAPI's Depends()."""
+        async def dependency(request):
+            from fastapi import HTTPException
+            # Handle 'read_only' logic
+            if self.access_mode != "authenticated":
+                return None
+            
+            try:
+                auth_header = request.headers.get("Authorization")
+                token = extract_token_from_header(auth_header)
+                # This call is async in FastAPI
+                claims = await self.validate_and_extract_claims(token, required_scope)
+                return claims
+            except Exception as e:
+                # In FastAPI, we RAISE the error handler's result
+                error_res = self.error_handler(e)
+                raise HTTPException(
+                    status_code=error_res.status_code,
+                    detail=json.loads(error_res.body.decode())["error"]
+                )
+        return dependency
+
 class FlaskAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
         from authlib.integrations.flask_client import OAuth
@@ -510,4 +537,24 @@ class FlaskAuthAdapter(BaseAuthAdapter):
             return self.token_response(new_tokens)
         except Exception as e:
             return self.error_handler(e)
+
+    def require_scope(self, required_scope: str):
+        def decorator(f):
+            @functools.wraps(f)
+            def decorated(*args, **kwargs):
+                # Handle the 'read_only' logic inside the adapter
+                if self.access_mode != "authenticated":
+                    return f(None, *args, **kwargs)
+                
+                try:
+                    from flask import request
+                    token = extract_token_from_header(
+                        request.headers.get("Authorization"))
+                    claims = self.validate_and_extract_claims(token, required_scope)
+                    # Pass claims into the route
+                    return f(claims, *args, **kwargs)
+                except Exception as e:
+                    return self.error_handler(e)
+            return decorated
+        return decorator
 
