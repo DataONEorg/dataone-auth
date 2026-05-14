@@ -36,6 +36,10 @@ class InsufficientScopeError(AuthError):
     """Raised when the token is valid but doesn't have the right scope"""
     pass
 
+class TokenExtractionError(ValueError):
+    """Raised when the Authorization header is missing or malformed."""
+    pass
+
 ### Helpers
 
 def load_client_secrets(filepath: str | None = None) -> dict:
@@ -59,22 +63,28 @@ def load_client_secrets(filepath: str | None = None) -> dict:
         return json.load(f)
 
 def extract_token_from_header(auth_header: str):
-    """Extracts and safely bounds a Bearer token from an Authorization header."""
+    """Extracts and validates a Bearer token. Raises ValueError on failure."""
    
-    # check there is a token
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return None
+    if not auth_header:
+        raise TokenExtractionError("Missing Authorization header")
+
+    if not auth_header.startswith("Bearer "):
+        raise TokenExtractionError(
+            "Invalid Authorization header format. Expected 'Bearer <token>'"
+            )
 
     token = auth_header[7:].strip()
+    
+    if not token:
+        raise TokenExtractionError("Token is empty")
         
-    # make sure it looks like a JWT token
+    # Check JWT structure
     if token.count('.') != 2:
-        return None
+        raise TokenExtractionError("Token is malformed (invalid JWT structure)")
 
-    # caps the token length to prevent huge tokens from causing DoS issues in downstream
-    #  processing.
+    # DoS protection
     if len(token) > MAX_TOKEN_LEN:
-        return None
+        raise TokenExtractionError("Token exceeds maximum allowed length")
     
     return token
 
@@ -175,6 +185,7 @@ class BaseAuthAdapter:
     )
 
     ERROR_MAP = {
+        TokenExtractionError: ("Invalid token or header", 401),
         DecodeError: ("Token decoding failed", 401),
         InvalidClientError: ("OIDC client authentication failed", 401),
         InvalidTokenError: ("Token validation failed", 401),
