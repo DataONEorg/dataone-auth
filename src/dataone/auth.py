@@ -446,11 +446,11 @@ class BaseAuthAdapter:
         """This is implemented by subclasses."""
         raise NotImplementedError
 
-    def require_scope(self, required_scope: str):
+    def require_scope(self, required_scope: str, methods=None):
         """This is implemented by subclasses."""
         raise NotImplementedError
     
-    def require_token(self):
+    def require_token(self, methods=None):
         """This is implemented by subclasses."""
         raise NotImplementedError
     
@@ -678,7 +678,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self._error_handler(e)
 
-    def require_scope(self, required_scope: str):
+    def require_scope(self, required_scope: str, methods=None):
         """Creates a FastAPI dependency to enforce scope requirements on routes.
 
         This method returns an async function designed to be injected into FastAPI 
