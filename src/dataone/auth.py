@@ -994,8 +994,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
             @functools.wraps(f)
             def decorated(*args, **kwargs):
                 from flask import request
-                mode = self.get_access_mode()
-                if mode != "authenticated":
+                if self.access_mode != "authenticated":
                     return f(None, *args, **kwargs)
 
                 # filter http methods
