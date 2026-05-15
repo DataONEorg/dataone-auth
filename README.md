@@ -41,7 +41,7 @@ To run the code formatter and linter, use Ruff:
 
 ### Flask
 
-Below is a minimal example for a Flask application. For the Flask implementation, applying `ProxyFix` is recommended to ensure correct redirect URIs when the app is running behind a reverse proxy or load balancer. Following standard Flask extension patterns, the `auth_client` must be explicitly bound to the application using `init_app()`. Once initialized, protect any endpoint by stacking the `@auth_client.require_scope(...)` decorator below the route definition. This automatically intercepts the Bearer token, validates the OIDC claims against the provider's JWKS, and injects the resulting claims dictionary into the view function.
+Below is a minimal example for a Flask application. For the Flask implementation, applying `ProxyFix` is recommended to ensure correct redirect URIs when the app is running behind a reverse proxy or load balancer. Following standard Flask extension patterns, the `auth_client` must be explicitly bound to the application using `init_app()`. Once initialized, protect any endpoint by stacking the `@auth_client.require_scope(...)` decorator below the route definition. This automatically intercepts the Bearer token, validates the OIDC claims against the provider's JWKS, and injects the resulting claims dictionary into the view function. Note that routes can also use `@auth_client.require_token(...)` if checking scopes is not necessary. Optionally, HTTP methods can be passed to either decorator to specify auth requirements based on method if necessary.
 
 ```python
 import json
@@ -96,7 +96,7 @@ if __name__ == "__main__":
 
 ### FastAPI
 
-Below is a minimal example for a FastAPI application. Unlike Flask, FastAPI doesn't require an `init_app` step; the `auth_client` is ready to use immediately upon creation. Note that `SessionMiddleware` must be added to the app to handle the OIDC state and nonce during the browser-based login and authorization flow. For the API endpoints, the heavy lifting happens within the `Depends(auth_client.require_scope(...))` dependency, which automatically intercepts the Bearer token, validates the OIDC claims against the provider's JWKS, and injects the ready-to-use claims dictionary  into the route handler.
+Below is a minimal example for a FastAPI application. Unlike Flask, FastAPI doesn't require an `init_app` step; the `auth_client` is ready to use immediately upon creation. Note that `SessionMiddleware` must be added to the app to handle the OIDC state and nonce during the browser-based login and authorization flow. For the API endpoints, the heavy lifting happens within the `Depends(auth_client.require_scope(...))` dependency, which automatically intercepts the Bearer token, validates the OIDC claims against the provider's JWKS, and injects the ready-to-use claims dictionary  into the route handler. Note that routes can also use `Depends(auth_client.require_token(...))` if checking scopes is not necessary. Optionally, HTTP methods can be passed to either `Depends` to specify auth requirements based on method if necessary.
 
 ```python
 import os
