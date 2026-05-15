@@ -6,10 +6,11 @@ import re
 import httpx
 import requests
 from authlib.integrations.base_client.errors import OAuthError
-from authlib.jose import JsonWebKey, jwt
-from authlib.jose.errors import BadSignatureError, DecodeError, InvalidTokenError
 from authlib.oauth2 import OAuth2Error
 from authlib.oauth2.rfc6749.errors import InvalidClientError, InvalidGrantError
+from joserfc import jwt
+from joserfc.errors import JoseError
+from joserfc.jwk import KeySet
 from requests import RequestException
 
 ### Params
@@ -39,6 +40,10 @@ class InsufficientScopeError(AuthError):
 
 class TokenExtractionError(AuthError):
     """Raised when the Authorization header is missing or malformed."""
+    pass
+
+class InvalidTokenError(AuthError):
+    """Raised when claims like iss or aud do not match expectations."""
     pass
 
 class ConfigurationError(AuthError):
@@ -162,17 +167,37 @@ def get_access_mode() -> str:
         return ACCESS_MODE_AUTHENTICATED
     return mode
 
-def decode_claims(token_str: str, jwks: str, client_id: str, issuer: str):
-    claims = jwt.decode(
-            token_str,
-            jwks,
-            claims_options={
-                "iss": {"essential": True, "value": issuer},
-                "aud": {"essential": True, "value": client_id},
-                "azp": {"essential": True, "value": client_id},
-            },
-        )
-    claims.validate()
+
+def decode_claims(token_str, jwks, client_id, issuer):
+    """Decodes and validates a JWT using joserfc.
+    
+    Args:
+        token_str: The raw encoded JWT string.
+        jwks: The KeySet object returned by _get_jwks_keys.
+        client_id: The expected audience (aud) and authorized party (azp).
+        issuer: The expected issuer (iss) URI of the token.
+        
+    Returns:
+        The validated claims object.
+        
+    Raises:
+        ValueError: If the issuer, audience, or azp claims do not match 
+                    the expected values.
+    """
+    token = jwt.decode(token_str, jwks)
+    
+    # standard joserfc validation (checks exp, nbf, etc.)
+    claims = token.claims
+    registry = jwt.JWTClaimsRegistry()
+    registry.validate(claims)
+    
+    if claims.get("iss") != issuer:
+        raise InvalidTokenError("Invalid issuer")
+    if claims.get("aud") != client_id:
+        raise InvalidTokenError("Invalid audience")
+    if claims.get("azp") and claims.get("azp") != client_id:
+        raise InvalidTokenError("Invalid authorized party (azp)")
+        
     return claims
 
 ### Factory
@@ -241,11 +266,10 @@ class BaseAuthAdapter:
 
     ERROR_MAP = {
         TokenExtractionError: ("Invalid token or header", 401),
-        DecodeError: ("Token decoding failed", 401),
+        JoseError: ("Token decoding or signature verification failed", 401), # <- New
+        InvalidTokenError: ("Token validation failed", 401), # <- Now your custom error
         InvalidClientError: ("OIDC client authentication failed", 401),
-        InvalidTokenError: ("Token validation failed", 401),
         InvalidGrantError: ("Invalid or expired refresh token", 401),
-        BadSignatureError: ("Token signature verification failed", 401),
         OAuthError: ("Authorization failed", 401),
         OAuth2Error: ("An OAuth2 error occurred", 401),
         KeyError: ("Invalid token structure", 401),
@@ -358,14 +382,12 @@ class BaseAuthAdapter:
         if not jwks_uri:
             raise ValueError("OIDC provider metadata missing 'jwks_uri'")
 
-        jwks_uri = metadata.get("jwks_uri")
-        if not jwks_uri:
-            raise ValueError("OIDC provider metadata does not contain 'jwks_uri'")
-
         response = requests.get(jwks_uri, timeout=10)
         response.raise_for_status()
-        self._cached_jwks = JsonWebKey.import_key_set(response.json())
-        
+
+        # joserfc uses KeySet.import_key_set
+        self._cached_jwks = KeySet.import_key_set(response.json())
+
         return self._cached_jwks
 
     def _decode_and_validate_token(self, token_str: str):
@@ -507,22 +529,20 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
             httpx.HTTPStatusError: If the network request to the `jwks_uri` fails.
         """
         if hasattr(self, '_cached_jwks'):
-            return self._cached_jwks
+                return self._cached_jwks
 
         provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
-        # FastAPI requires await here
         metadata = await provider.load_server_metadata()
-
+    
         jwks_uri = metadata.get("jwks_uri")
         if not jwks_uri:
             raise ValueError("OIDC provider metadata missing 'jwks_uri'")
-
-        # Non-blocking HTTP request
+    
         async with httpx.AsyncClient() as client:
             response = await client.get(jwks_uri, timeout=10)
             response.raise_for_status()
             
-        self._cached_jwks = JsonWebKey.import_key_set(response.json())
+        self._cached_jwks = KeySet.import_key_set(response.json())
         return self._cached_jwks
 
     async def _decode_and_validate_token(self, token_str: str):

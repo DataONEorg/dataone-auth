@@ -1,9 +1,16 @@
 """Unit tests for auth.py helpers."""
 import pytest
+from joserfc import jwt
+from joserfc.jwk import KeySet, RSAKey
 
 from dataone.auth import (
-    AuthFactory, extract_orcid, extract_token_from_header, MissingParameterError,
-    TokenExtractionError, decode_claims
+    AuthFactory,
+    InvalidTokenError,
+    MissingParameterError,
+    TokenExtractionError,
+    decode_claims,
+    extract_orcid,
+    extract_token_from_header,
 )
 
 
@@ -50,7 +57,8 @@ def test_extract_token_missing_header():
 
 def test_extract_token_invalid_format():
     """Test error when 'Bearer ' prefix is missing."""
-    with pytest.raises(TokenExtractionError, match="Invalid Authorization header format"):
+    with pytest.raises(TokenExtractionError,
+     match="Invalid Authorization header format"):
         extract_token_from_header("Token abc.def.ghi")
 
 def test_extract_token_empty_after_prefix():
@@ -66,20 +74,24 @@ def test_extract_token_malformed_jwt():
 def test_extract_token_too_long():
     """Test DoS protection for oversized tokens."""
     long_token = "a.b." + ("c" * 20000) # Exceeds default 16,384
-    with pytest.raises(TokenExtractionError, match="Token exceeds maximum allowed length"):
+    with pytest.raises(TokenExtractionError,
+     match="Token exceeds maximum allowed length"):
         extract_token_from_header(f"Bearer {long_token}")
 
-
-import pytest
-from authlib.jose import jwt, JsonWebKey
-
 def test_decode_claims_success():
-    # generate a simple RSA key for testing
-    key = JsonWebKey.generate_key('RSA', 2048, is_private=True)
-    public_jwks = JsonWebKey.import_key_set([key.as_dict(is_private=False)])
+    # generate rsa key
+    raw_key = RSAKey.generate_key(2048)
+    
+    # export to dict and strictly set a string 'kid'
+    private_jwk = raw_key.as_dict(is_private=True)
+    private_jwk['kid'] = 'test-key-id-1'
+    
+    # re-import the key so it officially has the kid, and create the public JWKS
+    key = RSAKey.import_key(private_jwk)
+    public_jwk = KeySet.import_key_set({"keys": [key.as_dict(is_private=False)]})
     
     # setup mock claims/headers
-    header = {'alg': 'RS256', 'kid': key.as_dict().get('kid')}
+    header = {'alg': 'RS256', 'kid': 'test-key-id-1'}
     payload = {
         "iss": "https://auth.example.com",
         "aud": "my_client_id",
@@ -89,12 +101,12 @@ def test_decode_claims_success():
     }
     
     # create a signed token
-    token = jwt.encode(header, payload, key).decode('utf-8')
+    token = jwt.encode(header, payload, key)
 
     # test
     result = decode_claims(
         token_str=token,
-        jwks=public_jwks,
+        jwks=public_jwk,
         client_id="my_client_id",
         issuer="https://auth.example.com"
     )
@@ -102,23 +114,28 @@ def test_decode_claims_success():
     assert result['sub'] == "12345"
     assert result['iss'] == "https://auth.example.com"
 
+
 def test_decode_claims_invalid_issuer():
-    key = JsonWebKey.generate_key('RSA', 2048, is_private=True)
-    public_jwks = JsonWebKey.import_key_set([key.as_dict(is_private=False)])
+    raw_key = RSAKey.generate_key(2048)
+    
+    private_jwk = raw_key.as_dict(is_private=True)
+    private_jwk['kid'] = 'test-key-id-2'
+    
+    key = RSAKey.import_key(private_jwk)
+    public_jwk = KeySet.import_key_set({"keys": [key.as_dict(is_private=False)]})
     
     # token has 'wrong-issuer'
+    header = {'alg': 'RS256', 'kid': 'test-key-id-2'}
     payload = {
         "iss": "wrong-issuer",
         "aud": "my_client_id",
         "azp": "my_client_id"
     }
-    token = jwt.encode({'alg': 'RS256'}, payload, key).decode('utf-8')
+    token = jwt.encode(header, payload, key)
 
-    # this should raise an error because the 'value' doesn't match the claims_options
-    from authlib.jose.errors import InvalidClaimError
-    with pytest.raises(InvalidClaimError):
-        decode_claims(token, public_jwks, "my_client_id", "https://auth.example.com")
-
+    # should raise InvalidTokenError
+    with pytest.raises(InvalidTokenError, match="Invalid issuer"):
+        decode_claims(token, public_jwk, "my_client_id", "https://auth.example.com")
 MOCK_SECRETS = {
     "client_id": "test client",
     "client_secret": "a string",
