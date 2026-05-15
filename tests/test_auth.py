@@ -1,7 +1,10 @@
 """Unit tests for auth.py helpers."""
 import pytest
 
-from dataone.auth import AuthFactory, extract_orcid
+from dataone.auth import (
+    AuthFactory, extract_orcid, extract_token_from_header, MissingParameterError,
+    TokenExtractionError, decode_claims
+)
 
 
 def test_extract_orcid_returns_https_uri_from_https_orcid_claim():
@@ -33,6 +36,88 @@ def test_extract_orcid_returns_none_for_none_input():
 def test_extract_orcid_returns_none_for_empty_claims():
     """Test that extract_orcid returns None when called with an empty claims dict."""
     assert extract_orcid({}) is None
+
+def test_extract_token_success():
+    """Test standard valid Bearer token extraction."""
+    token = "header.payload.signature"
+    auth_header = f"Bearer {token}"
+    assert extract_token_from_header(auth_header) == token
+
+def test_extract_token_missing_header():
+    """Test error when header is None or empty string."""
+    with pytest.raises(MissingParameterError, match="Missing Authorization header"):
+        extract_token_from_header("")
+
+def test_extract_token_invalid_format():
+    """Test error when 'Bearer ' prefix is missing."""
+    with pytest.raises(TokenExtractionError, match="Invalid Authorization header format"):
+        extract_token_from_header("Token abc.def.ghi")
+
+def test_extract_token_empty_after_prefix():
+    """Test error when header is just 'Bearer ' with no content."""
+    with pytest.raises(TokenExtractionError, match="Token is empty"):
+        extract_token_from_header("Bearer    ")
+
+def test_extract_token_malformed_jwt():
+    """Test error when token doesn't have 2 dots."""
+    with pytest.raises(TokenExtractionError, match="Token is malformed"):
+        extract_token_from_header("Bearer not-a-jwt")
+
+def test_extract_token_too_long():
+    """Test DoS protection for oversized tokens."""
+    long_token = "a.b." + ("c" * 20000) # Exceeds default 16,384
+    with pytest.raises(TokenExtractionError, match="Token exceeds maximum allowed length"):
+        extract_token_from_header(f"Bearer {long_token}")
+
+
+import pytest
+from authlib.jose import jwt, JsonWebKey
+
+def test_decode_claims_success():
+    # generate a simple RSA key for testing
+    key = JsonWebKey.generate_key('RSA', 2048, is_private=True)
+    public_jwks = JsonWebKey.import_key_set([key.as_dict(is_private=False)])
+    
+    # setup mock claims/headers
+    header = {'alg': 'RS256', 'kid': key.as_dict().get('kid')}
+    payload = {
+        "iss": "https://auth.example.com",
+        "aud": "my_client_id",
+        "azp": "my_client_id",
+        "sub": "12345",
+        "scope": "openid profile"
+    }
+    
+    # create a signed token
+    token = jwt.encode(header, payload, key).decode('utf-8')
+
+    # test
+    result = decode_claims(
+        token_str=token,
+        jwks=public_jwks,
+        client_id="my_client_id",
+        issuer="https://auth.example.com"
+    )
+
+    assert result['sub'] == "12345"
+    assert result['iss'] == "https://auth.example.com"
+
+def test_decode_claims_invalid_issuer():
+    key = JsonWebKey.generate_key('RSA', 2048, is_private=True)
+    public_jwks = JsonWebKey.import_key_set([key.as_dict(is_private=False)])
+    
+    # token has 'wrong-issuer'
+    payload = {
+        "iss": "wrong-issuer",
+        "aud": "my_client_id",
+        "azp": "my_client_id"
+    }
+    token = jwt.encode({'alg': 'RS256'}, payload, key).decode('utf-8')
+
+    # this should raise an error because the 'value' doesn't match the claims_options
+    from authlib.jose.errors import InvalidClaimError
+    with pytest.raises(InvalidClaimError):
+        decode_claims(token, public_jwks, "my_client_id", "https://auth.example.com")
 
 MOCK_SECRETS = {
     "client_id": "test client",
