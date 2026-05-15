@@ -423,12 +423,14 @@ class BaseAuthAdapter:
             The validated claims dict.
             
         Raises:
-            Exception: JoseError from Authlib if token is invalid/expired.
+            JoseError: If the token is invalid, expired, or has an incorrect
+                       issuer/audience.
             InsufficientScopeError: If the token lacks the required scope.
         """
         claims = self._decode_and_validate_token(token_str)
         
-        self._verify_scope(claims, required_scope)
+        if required_scope:
+            self._verify_scope(claims, required_scope)
         
         return claims
 
@@ -445,6 +447,10 @@ class BaseAuthAdapter:
         raise NotImplementedError
 
     def require_scope(self, required_scope: str):
+        """This is implemented by subclasses."""
+        raise NotImplementedError
+    
+    def require_token(self):
         """This is implemented by subclasses."""
         raise NotImplementedError
     
@@ -575,7 +581,8 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         """
         claims = await self._decode_and_validate_token(token_str)
         
-        self._verify_scope(claims, required_scope)
+        if required_scope:
+            self._verify_scope(claims, required_scope)
         
         return claims
     
@@ -682,6 +689,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         Args:
             required_scope: The specific OAuth scope required to access the route 
                             (e.g., "read:data" or "write:admin").
+            methods: Optional list of HTTP method names (e.g., ['POST', 'PUT']) to 
+                     protect. If None, all methods are protected. If the current request
+                     method is not in this list, authentication is bypassed.
 
         Returns:
             An asynchronous callable dependency that returns validated token claims.
@@ -714,6 +724,63 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
                 token = extract_token_from_header(auth_header)
                 # This call is async in FastAPI
                 claims = await self.validate_and_extract_claims(token, required_scope)
+                return claims
+            except Exception as e:
+                # In FastAPI, we RAISE the error handler's result
+                error_res = self._error_handler(e)
+                raise HTTPException(
+                    status_code=error_res.status_code,
+                    detail=json.loads(error_res.body.decode())["error"]
+                )
+        return dependency
+
+    def require_token(self, methods=None):
+        """Creates a FastAPI dependency to enforce token requirements on routes.
+
+        This method returns an async function designed to be injected into FastAPI 
+        endpoints using `Depends()`. It extracts the token, validates it, and returns
+        the claims. If the adapter's access mode is not set to 'authenticated' (e.g., 
+        'read_only'), validation is bypassed.
+
+        Args:
+            methods: Optional list of HTTP method names (e.g., ['POST', 'PUT']) to 
+                     protect. If None, all methods are protected. If the current request
+                     method is not in this list, authentication is bypassed.
+
+        Returns:
+            An asynchronous callable dependency that returns validated token claims.
+
+        Raises:
+            fastapi.HTTPException: If token validation fails. The internal exception 
+                                   is translated into a standard FastAPI HTTP error 
+                                   using the adapter's error handler.
+
+        Example:
+            from fastapi import Depends
+            
+            @app.get("/secure-data")
+            async def get_secure_data(
+                    claims: dict = Depends(auth_adapter.require_token(methods=["POST"]))
+            ):
+                return {"message": "Access granted", "user": claims.get("sub")}
+        """
+        from fastapi import Request
+        async def dependency(request: Request):
+            from fastapi import HTTPException
+
+            from .auth import extract_token_from_header
+            # Handle 'read_only' logic
+            if self.access_mode != "authenticated":
+                return None
+            
+            if methods is not None and request.method not in methods:
+                return None
+            
+            try:
+                auth_header = request.headers.get("Authorization")
+                token = extract_token_from_header(auth_header)
+                # This call is async in FastAPI
+                claims = await self.validate_and_extract_claims(token)
                 return claims
             except Exception as e:
                 # In FastAPI, we RAISE the error handler's result
@@ -852,7 +919,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self._error_handler(e)
 
-    def require_scope(self, required_scope: str):
+    def require_scope(self, required_scope: str, methods: None):
         """Creates a Flask decorator to enforce scope requirements on routes.
 
         This method returns a decorator that extracts the Bearer token from the 
@@ -864,6 +931,9 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         Args:
             required_scope: The specific OAuth scope required to access the route 
                             (e.g., "read:data").
+            methods: Optional list of HTTP method names (e.g., ['POST', 'PUT']) to 
+                     protect. If None, all methods are protected. If the current request
+                     method is not in this list, authentication is bypassed.
 
         Returns:
             A decorator function that wraps a Flask route handler.
@@ -877,8 +947,11 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         def decorator(f):
             @functools.wraps(f)
             def decorated(*args, **kwargs):
-                # Handle the 'read_only' logic inside the adapter
+                from flask import request
                 if self.access_mode != "authenticated":
+                    return f(None, *args, **kwargs)
+
+                if methods is not None and request.method not in methods:
                     return f(None, *args, **kwargs)
                 
                 try:
@@ -893,3 +966,50 @@ class FlaskAuthAdapter(BaseAuthAdapter):
             return decorated
         return decorator
 
+    def require_token(self, methods=None):
+        """Creates a Flask decorator to enforce token authentication on routes.
+
+        This method returns a decorator that extracts the Bearer token from the 
+        'Authorization' header, validates it, and injects the resulting claims 
+        into the decorated function as the first argument. If the adapter is in 
+        'read_only' or 'open' mode, validation is bypassed and 'None' is passed 
+        for the claims.
+
+        Args:
+            methods: Optional list of HTTP method names (e.g., ['POST', 'PUT']) to 
+                     protect. If None, all methods are protected. If the current request
+                     method is not in this list, authentication is bypassed.
+
+        Returns:
+            A decorator function that wraps a Flask route handler.
+
+        Example:
+            @app.route("/any-authenticated-user", methods=["GET", "POST"])
+            @auth_adapter.require_token(methods=["POST"])
+            def handle_data(claims):
+                user_id = claims.get("sub") if claims else "Anonymous"
+                return {"message": "Success", "user": user_id}
+        """
+        def decorator(f):
+            @functools.wraps(f)
+            def decorated(*args, **kwargs):
+                from flask import request
+                mode = self.get_access_mode()
+                if mode != "authenticated":
+                    return f(None, *args, **kwargs)
+
+                # filter http methods
+                if methods is not None and request.method not in methods:
+                    return f(None, *args, **kwargs)
+
+                try:
+                    from flask import request
+                    token = extract_token_from_header(
+                        request.headers.get("Authorization"))
+                    claims = self.validate_and_extract_claims(token)
+                    # Pass claims into the route
+                    return f(claims, *args, **kwargs)
+                except Exception as e:
+                    return self._error_handler(e)
+            return decorated
+        return decorator
