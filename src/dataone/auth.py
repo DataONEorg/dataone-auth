@@ -162,6 +162,19 @@ def get_access_mode() -> str:
         return ACCESS_MODE_AUTHENTICATED
     return mode
 
+def decode_claims(token_str: str, jwks: str, client_id: str, issuer: str):
+    claims = jwt.decode(
+            token_str,
+            jwks,
+            claims_options={
+                "iss": {"essential": True, "value": issuer},
+                "aud": {"essential": True, "value": client_id},
+                "azp": {"essential": True, "value": client_id},
+            },
+        )
+    claims.validate()
+    return claims
+
 ### Factory
 
 class AuthFactory:
@@ -298,15 +311,27 @@ class BaseAuthAdapter:
                 
         return "Internal authentication error", 500
 
-    def error_handler(self, exc: Exception):
+    def _verify_scope(self, claims: dict, required_scope: str | None):
+        """Internal helper to check if the required scope exists in claims."""
+        if not required_scope:
+            return
+
+        token_scopes = claims.get("scope", "").split()
+        if required_scope not in token_scopes:
+            raise InsufficientScopeError(
+                f"Required: '{required_scope}'. "
+                f"Available: {token_scopes}"
+            )
+
+    def _error_handler(self, exc: Exception):
         """This is implemented by subclasses."""
         raise NotImplementedError
 
-    def token_response(self, token: dict, message: str):
+    def _token_response(self, token: dict, message: str):
         """This is implemented by subclasses."""
         raise NotImplementedError
 
-    def get_jwks_keys(self):
+    def _get_jwks_keys(self):
         """Fetch and cache the JWKS signing keys from the OIDC provider.
 
         These keys are used to validate JWT token signatures. Care must be taken to 
@@ -343,7 +368,7 @@ class BaseAuthAdapter:
         
         return self._cached_jwks
 
-    def decode_and_validate_token(self, token_str: str):
+    def _decode_and_validate_token(self, token_str: str):
         """Decodes and validates a JWT using the provider's JWKS.
         
         Enforces signature validity as well as the exact issuer (iss), 
@@ -355,7 +380,7 @@ class BaseAuthAdapter:
         Returns:
             The validated token claims object.
         """
-        jwks = self.get_jwks_keys()
+        jwks = self._get_jwks_keys()
         
         provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
         metadata = provider.load_server_metadata()
@@ -363,17 +388,7 @@ class BaseAuthAdapter:
 
         client_id = self.secrets.get("client_id")
 
-        claims = jwt.decode(
-            token_str,
-            jwks,
-            claims_options={
-                "iss": {"essential": True, "value": issuer},
-                "aud": {"essential": True, "value": client_id},
-                "azp": {"essential": True, "value": client_id},
-            },
-        )
-        claims.validate()
-        return claims
+        return decode_claims(token_str, jwks, client_id, issuer)
     
     def validate_and_extract_claims(self, token_str: str, required_scope: str = None):
         """Validate a token string and optionally check required scope.
@@ -389,15 +404,9 @@ class BaseAuthAdapter:
             Exception: JoseError from Authlib if token is invalid/expired.
             InsufficientScopeError: If the token lacks the required scope.
         """
-        claims = self.decode_and_validate_token(token_str)
+        claims = self._decode_and_validate_token(token_str)
         
-        if required_scope:
-            token_scopes = claims.get("scope", "").split()
-            if required_scope not in token_scopes:
-                raise InsufficientScopeError(
-                    f"Required: '{required_scope}'."
-                    "Available: {[s for s in token_scopes]}"
-                )
+        self._verify_scope(claims, required_scope)
         
         return claims
 
@@ -438,7 +447,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         self._response_class = JSONResponse
         return OAuth()
 
-    def error_handler(self, exc: Exception):
+    def _error_handler(self, exc: Exception):
         """Formats an exception into a FastAPI JSON response.
         
         Args:
@@ -459,7 +468,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
             }
         )
 
-    def token_response(self, token: dict, message: str = "Success"):
+    def _token_response(self, token: dict, message: str = "Success"):
         """Formats successful token data into a FastAPI JSON response.
         
         Args:
@@ -483,7 +492,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
             }
         )
 
-    async def get_jwks_keys(self):
+    async def _get_jwks_keys(self):
         """Asynchronously fetches and caches the OIDC provider's JWKS.
         
         Retrieves the provider metadata to find the `jwks_uri`, makes a non-blocking 
@@ -516,9 +525,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         self._cached_jwks = JsonWebKey.import_key_set(response.json())
         return self._cached_jwks
 
-    async def decode_and_validate_token(self, token_str: str):
+    async def _decode_and_validate_token(self, token_str: str):
         """Async override for decoding."""
-        jwks = await self.get_jwks_keys()
+        jwks = await self._get_jwks_keys()
         
         provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
         # Starlette requires await here too
@@ -527,17 +536,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
         client_id = self.secrets.get("client_id")
 
-        claims = jwt.decode(
-            token_str,
-            jwks,
-            claims_options={
-                "iss": {"essential": True, "value": issuer},
-                "aud": {"essential": True, "value": client_id},
-                "azp": {"essential": True, "value": client_id},
-            },
-        )
-        claims.validate()
-        return claims
+        return decode_claims(token_str, jwks, client_id, issuer)
 
     async def validate_and_extract_claims(self,
         token_str: str,
@@ -554,15 +553,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         Returns:
             The validated token claims object.
         """
-        claims = await self.decode_and_validate_token(token_str)
+        claims = await self._decode_and_validate_token(token_str)
         
-        if required_scope:
-            token_scopes = claims.get("scope", "").split()
-            if required_scope not in token_scopes:
-                raise InsufficientScopeError(
-                    f"Required: '{required_scope}'."
-                    "Available: {[s for s in token_scopes]}"
-                )
+        self._verify_scope(claims, required_scope)
         
         return claims
     
@@ -613,9 +606,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         try:
             # Must await the token exchange in FastAPI
             token = await self.dataone_oidc.authorize_access_token(request)
-            return self.token_response(token)
+            return self._token_response(token)
         except Exception as e:
-            return self.error_handler(e)
+            return self._error_handler(e)
 
     async def refresh(self, request_json: dict):
         """Asynchronously exchanges a refresh token for new access tokens.
@@ -640,7 +633,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         refresh_token = request_json.get("refresh_token")
         if not refresh_token:
             # This triggers our mapped TokenExtractionError (401)
-            return self.error_handler(TokenExtractionError("Missing refresh_token"))
+            return self._error_handler(TokenExtractionError("Missing refresh_token"))
         
         scope = request_json.get("scope")
         
@@ -654,9 +647,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
                 
             # The Starlette fetch_access_token is async
             new_tokens = await self.dataone_oidc.fetch_access_token(**kwargs)
-            return self.token_response(new_tokens, message="Token refresh successful")
+            return self._token_response(new_tokens, message="Token refresh successful")
         except Exception as e:
-            return self.error_handler(e)
+            return self._error_handler(e)
 
     def require_scope(self, required_scope: str):
         """Creates a FastAPI dependency to enforce scope requirements on routes.
@@ -704,7 +697,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
                 return claims
             except Exception as e:
                 # In FastAPI, we RAISE the error handler's result
-                error_res = self.error_handler(e)
+                error_res = self._error_handler(e)
                 raise HTTPException(
                     status_code=error_res.status_code,
                     detail=json.loads(error_res.body.decode())["error"]
@@ -721,7 +714,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         from authlib.integrations.flask_client import OAuth
         return OAuth()
 
-    def error_handler(self, exc: Exception):
+    def _error_handler(self, exc: Exception):
         """Formats an exception into a Flask JSON response.
         
         Args:
@@ -740,7 +733,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
             }
         }), code
 
-    def token_response(self, token: dict, message: str = "Success"):
+    def _token_response(self, token: dict, message: str = "Success"):
         """Formats successful token data into a Flask JSON response.
         
         Args:
@@ -802,9 +795,9 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         """
         try:
             token = self.dataone_oidc.authorize_access_token()
-            return self.token_response(token)
+            return self._token_response(token)
         except Exception as e:
-            return self.error_handler(e)
+            return self._error_handler(e)
 
     def refresh(self, request_json: dict):
         """Executes the synchronous token refresh request for Flask.
@@ -826,7 +819,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         if not refresh_token:
             # We return the error handler result instead of raising 
             # to match the Flask return-style flow.
-            return self.error_handler(TokenExtractionError("Missing refresh_token"))
+            return self._error_handler(TokenExtractionError("Missing refresh_token"))
         
         scope = request_json.get("scope")
         try:
@@ -835,9 +828,9 @@ class FlaskAuthAdapter(BaseAuthAdapter):
                 kwargs["scope"] = scope
             
             new_tokens = self.dataone_oidc.fetch_access_token(**kwargs)
-            return self.token_response(new_tokens, message="Token refresh successful")
+            return self._token_response(new_tokens, message="Token refresh successful")
         except Exception as e:
-            return self.error_handler(e)
+            return self._error_handler(e)
 
     def require_scope(self, required_scope: str):
         """Creates a Flask decorator to enforce scope requirements on routes.
@@ -876,7 +869,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
                     # Pass claims into the route
                     return f(claims, *args, **kwargs)
                 except Exception as e:
-                    return self.error_handler(e)
+                    return self._error_handler(e)
             return decorated
         return decorator
 
