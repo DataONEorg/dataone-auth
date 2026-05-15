@@ -26,19 +26,22 @@ _ORCID_HTTP_PREFIX = "http://orcid.org/"
 
 ### Exceptions
 
-class MissingParameterError(Exception):
+class AuthError(Exception):
+    """Base exception for dataone-auth."""
+    pass
+
+class MissingParameterError(AuthError):
     """Raised when a required request parameter is missing."""
 
-class AuthError(Exception):
-    """Base exception for dataone-auth"""
-    pass
-
 class InsufficientScopeError(AuthError):
-    """Raised when the token is valid but doesn't have the right scope"""
+    """Raised when the token is valid but doesn't have the right scope."""
     pass
 
-class TokenExtractionError(ValueError):
+class TokenExtractionError(AuthError):
     """Raised when the Authorization header is missing or malformed."""
+    pass
+
+class ConfigurationError(AuthError):
     pass
 
 ### Helpers
@@ -47,11 +50,16 @@ def load_client_secrets(filepath: str | None = None) -> dict:
     """Load client secrets from a JSON file.
 
     Args:
-        filepath: Optional explicit path. Falls back to the
-                    ``OIDC_CLIENT_SECRETS_FILE`` environment variable
+        filepath: Optional explicit path. Falls back to the ``OIDC_CLIENT_SECRETS_FILE``
+                  environment variable, then finally to the default path of 
+                  "./client_secrets.json"
 
     Returns:
         Parsed dict of client credentials.
+
+    Raises:
+        ConfigurationError: If the secrets file cannot be found at the resolved path, 
+                            or if the file does not contain valid JSON.
     """
     # accept either explicit filepath argument or environment variable, with a default
     #  fallback
@@ -60,14 +68,32 @@ def load_client_secrets(filepath: str | None = None) -> dict:
         or os.getenv("OIDC_CLIENT_SECRETS_FILE")
         or _DEFAULT_SECRETS_PATH
     )
-    with open(resolved) as f:
-        return json.load(f)
+    try:
+        with open(resolved) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise ConfigurationError(f"Could not find OIDC secrets file at {resolved}")
+    except json.JSONDecodeError:
+        raise ConfigurationError(f"OIDC secrets file at {resolved} is not valid JSON")
 
 def extract_token_from_header(auth_header: str):
-    """Extracts and validates a Bearer token. Raises ValueError on failure."""
+    """Extracts and validates a Bearer token from an auth header string.
+    
+    Args:
+        auth_header: Auth header as a string (e.g., "Bearer <token>").
+    
+    Returns:
+        The extracted JWT token.
+
+    Raises:
+        MissingParameterError: If no header is supplied.
+        TokenExtractionError: If the token is empty, malformed, or exceeds the allowed
+                              length.
+    
+    """
    
     if not auth_header:
-        raise TokenExtractionError("Missing Authorization header")
+        raise MissingParameterError("Missing Authorization header")
 
     if not auth_header.startswith("Bearer "):
         raise TokenExtractionError(
@@ -139,6 +165,13 @@ def get_access_mode() -> str:
 ### Factory
 
 class AuthFactory:
+    """Factory for generating framework-specific authentication adapters.
+    
+    This factory uses a registry and dynamic imports to instantiate the correct
+    adapter (e.g., Flask or FastAPI) based on the running application. This pattern
+    ensures that a Flask application does not need to install FastAPI/Starlette 
+    dependencies, and vice versa.
+    """
 
     _registry = {
         "flask": "dataone.auth.FlaskAuthAdapter",
@@ -148,6 +181,23 @@ class AuthFactory:
 
     @classmethod
     def create_client(cls, framework: str, secrets: dict, scopes: list):
+        """Creates and returns the appropriate authentication adapter.
+        
+        Args:
+            framework: A string identifying the target web framework (e.g., "flask", 
+                       "fastapi").
+            secrets: A dictionary containing the OIDC client credentials, typically 
+                     loaded via `load_client_secrets()`.
+            scopes: A list of default OIDC scopes to request from the authorization 
+                    server (e.g., ["ogdc:admin"]).
+            
+        Returns:
+            BaseAuthAdapter: An instantiated, framework-specific adapter (such as 
+                             `FlaskAuthAdapter` or `FastAPIAuthAdapter`).
+            
+        Raises:
+            ValueError: If the framework string is not found in the registry.
+        """
         import_path = cls._registry.get(framework.lower())
         if not import_path:
             raise ValueError(f"Unsupported framework: {framework}")
@@ -159,32 +209,22 @@ class AuthFactory:
         return AdapterClass(secrets=secrets, scopes=scopes)
 
 class BaseAuthAdapter:
+    """Base adapter for handling OIDC authentication.
+    
+    This class manages the core Authlib registry initialization, OIDC provider 
+    setup, and access mode configuration. It is designed to be subclassed by 
+    framework-specific adapters (e.g., FlaskAuthAdapter, FastAPIAuthAdapter) 
+    that implement the actual request handling and dependency/decorator logic.
+    
+    Attributes:
+        DEFAULT_PROVIDER_NAME (str): The internal registry name for the OIDC provider.
+        DEFAULT_SCOPES (str): The standard base scopes requested during login.
+        access_mode (str): The current operating mode ('authenticated', 'read_only', 
+                           or 'open'), loaded during initialization.
+    """
 
     DEFAULT_PROVIDER_NAME = "dataone_oidc"
     DEFAULT_SCOPES = "openid email profile"
-
-    def __init__(self, secrets, scopes):
-        self.secrets = secrets
-        self.scopes = scopes
-        self.oauth = self._initialize_oauth()
-        self._setup_providers()
-        self.access_mode = get_access_mode()
-
-    def _initialize_oauth(self):
-        raise NotImplementedError
-
-    def _setup_providers(self):
-
-        base_scopes = self.DEFAULT_SCOPES.split()
-        scope_request = " ".join(dict.fromkeys(base_scopes + self.scopes))
-
-        self.oauth.register(
-            name=self.DEFAULT_PROVIDER_NAME,
-            client_id=self.secrets.get("client_id"),
-            client_secret=self.secrets.get("client_secret"),
-            server_metadata_url=self.secrets.get("server_metadata_url"),
-            client_kwargs={"scope": scope_request}, 
-    )
 
     ERROR_MAP = {
         TokenExtractionError: ("Invalid token or header", 401),
@@ -202,8 +242,49 @@ class BaseAuthAdapter:
         RequestException: ("Failed to fetch OIDC provider keys", 502),
     }
 
+    def __init__(self, secrets, scopes):
+        """Initializes the base authentication adapter.
+        
+        Args:
+            secrets: Dictionary of OIDC client credentials.
+            scopes: List of additional OIDC scopes to request.
+        """
+        self.secrets = secrets
+        self.scopes = scopes
+        self.oauth = self._initialize_oauth()
+        self._setup_providers()
+        self.access_mode = get_access_mode()
+
+    def _initialize_oauth(self):
+        """This is implemented by subclasses."""
+        raise NotImplementedError
+
+    def _setup_providers(self):
+        """Registers the OIDC provider using loaded secrets and scopes."""
+
+        base_scopes = self.DEFAULT_SCOPES.split()
+        scope_request = " ".join(dict.fromkeys(base_scopes + self.scopes))
+
+        self.oauth.register(
+            name=self.DEFAULT_PROVIDER_NAME,
+            client_id=self.secrets.get("client_id"),
+            client_secret=self.secrets.get("client_secret"),
+            server_metadata_url=self.secrets.get("server_metadata_url"),
+            client_kwargs={"scope": scope_request}, 
+    )
+
     def _resolve_error(self, exc: Exception):
-        """Logic to determine message and status from an exception."""
+        """Resolves an exception to an error message and HTTP status code.
+        
+        Evaluates the exception against ERROR_MAP, matching by direct class type 
+        or class name (string) to avoid hard dependency imports.
+
+        Args:
+            exc: The caught exception to be resolved.
+
+        Returns:
+            A tuple containing the error message (str) and HTTP status code (int).
+        """
         # Check for specific Authlib errors (handle imports or strings)
         for exc_type, (msg, code) in self.ERROR_MAP.items():
             # Parentheses let us wrap this logic across lines cleanly
@@ -218,11 +299,11 @@ class BaseAuthAdapter:
         return "Internal authentication error", 500
 
     def error_handler(self, exc: Exception):
-        """This will be implemented by subclasses."""
+        """This is implemented by subclasses."""
         raise NotImplementedError
 
     def token_response(self, token: dict, message: str):
-        """This will be implemented by subclasses."""
+        """This is implemented by subclasses."""
         raise NotImplementedError
 
     def get_jwks_keys(self):
@@ -263,12 +344,17 @@ class BaseAuthAdapter:
         return self._cached_jwks
 
     def decode_and_validate_token(self, token_str: str):
-        """Decode *and* full-validate a JWT against the OIDC provider's JWKS.
+        """Decodes and validates a JWT using the provider's JWKS.
         
-        Validates signature, issuer (iss), audience (aud), and authorized-party (azp)
-         claims.
-        """
+        Enforces signature validity as well as the exact issuer (iss), 
+        audience (aud), and authorized party (azp) claims.
 
+        Args:
+            token_str: The raw JWT string to validate.
+
+        Returns:
+            The validated token claims object.
+        """
         jwks = self.get_jwks_keys()
         
         provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
@@ -316,22 +402,19 @@ class BaseAuthAdapter:
         return claims
 
     def login(self, redirect_uri: str, request=None):
+        """This is implemented by subclasses."""
         raise NotImplementedError
 
     def authorize(self, request=None):
+        """This is implemented by subclasses."""
         raise NotImplementedError
 
     def refresh(self, request_json: dict):
-
-        refresh_token = request_json.get("refresh_token")
-        if not refresh_token:
-            raise TokenExtractionError("Missing refresh_token in request body")
-        
-        scope = request_json.get("scope")
-        # Call the specific implementation's fetch method
-        return self._do_refresh(refresh_token, scope)
+        """This is implemented by subclasses."""
+        raise NotImplementedError
 
     def require_scope(self, required_scope: str):
+        """This is implemented by subclasses."""
         raise NotImplementedError
     
     def __getattr__(self, name):
@@ -345,12 +428,26 @@ class BaseAuthAdapter:
 
 class FastAPIAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
+        """Initializes the Starlette-based OAuth registry for FastAPI.
+        
+        Sets the internal response class to FastAPI's JSONResponse and returns 
+        the instantiated Authlib OAuth object.
+        """
         from authlib.integrations.starlette_client import OAuth
         from fastapi.responses import JSONResponse
         self._response_class = JSONResponse
         return OAuth()
 
     def error_handler(self, exc: Exception):
+        """Formats an exception into a FastAPI JSON response.
+        
+        Args:
+            exc: The exception caught during authentication or request processing.
+
+        Returns:
+            A JSONResponse object containing the resolved HTTP status code 
+            and formatted error payload.
+        """
         msg, code = self._resolve_error(exc)
         return self._response_class(
             status_code=code,
@@ -363,6 +460,18 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         )
 
     def token_response(self, token: dict, message: str = "Success"):
+        """Formats successful token data into a FastAPI JSON response.
+        
+        Args:
+            token: A dictionary containing the token data (must include at least 
+                   'access_token' and 'refresh_token' keys).
+            message: An optional success message to include in the response payload. 
+                     Defaults to "Success".
+
+        Returns:
+            A JSONResponse object with a 200 status code and the standardized 
+            token payload.
+        """
         return self._response_class(
             status_code=200,
             content={
@@ -375,12 +484,24 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         )
 
     async def get_jwks_keys(self):
-        """Async override for fetching JWKS."""
+        """Asynchronously fetches and caches the OIDC provider's JWKS.
+        
+        Retrieves the provider metadata to find the `jwks_uri`, makes a non-blocking 
+        HTTP request to fetch the keys using `httpx`, and caches the parsed key set 
+        to prevent redundant network calls.
+
+        Returns:
+            The parsed JsonWebKey set.
+
+        Raises:
+            ValueError: If the provider metadata does not contain a 'jwks_uri'.
+            httpx.HTTPStatusError: If the network request to the `jwks_uri` fails.
+        """
         if hasattr(self, '_cached_jwks'):
             return self._cached_jwks
 
         provider = getattr(self.oauth, self.DEFAULT_PROVIDER_NAME)
-        # Starlette requires await here
+        # FastAPI requires await here
         metadata = await provider.load_server_metadata()
 
         jwks_uri = metadata.get("jwks_uri")
@@ -421,7 +542,18 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
     async def validate_and_extract_claims(self,
         token_str: str,
         required_scope: str = None):
-        """Async override for claim extraction."""
+        """Asynchronously decodes and validates a JWT using the provider's JWKS.
+        
+        This overrides the base method to support Starlette/FastAPI's asynchronous 
+        metadata and JWKS fetching. It enforces signature validity as well as exact 
+        matching for issuer (iss), audience (aud), and authorized party (azp) claims.
+
+        Args:
+            token_str: The raw JWT string to validate.
+
+        Returns:
+            The validated token claims object.
+        """
         claims = await self.decode_and_validate_token(token_str)
         
         if required_scope:
@@ -435,12 +567,49 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         return claims
     
     async def login(self, request, redirect_uri: str):
-        """Returns a Starlette/FastAPI RedirectResponse."""
+        """Asynchronously initiates the OIDC login flow.
+
+        Uses the Starlette OAuth client to generate a redirect response that 
+        sends the user to the authorization server.
+
+        Args:
+            request: The incoming Starlette or FastAPI Request object.
+            redirect_uri: The callback URL where the authorization server will 
+                          redirect the user after authentication.
+
+        Returns:
+            A Starlette RedirectResponse object pointing to the OIDC provider.
+        
+        Example:
+            @app.get("/login")
+            async def login(request: Request):
+                return await auth_adapter.login(
+                    request=request,
+                    redirect_uri=str(request.url_for("authorize"))
+                )
+        """
         # The Starlette client's authorize_redirect is async
         return await self.dataone_oidc.authorize_redirect(request, redirect_uri)
 
     async def authorize(self, request):
-        """Exchanges code for token and returns a JSONResponse."""
+        """Asynchronously exchanges an authorization code for an access token.
+
+        This method is designed to be used in the OIDC callback route. It 
+        processes the incoming redirect from the authorization server, extracts 
+        the code, and fetches the final tokens.
+
+        Args:
+            request: The incoming FastAPI Request object containing the auth code.
+
+        Returns:
+            A JSONResponse containing the extracted tokens on success, or a 
+            formatted error response on failure.
+
+        Example:
+            @app.get("/authorize")
+            async def authorize(request: Request):
+                return await auth_adapter.authorize(request=request)
+        """
         try:
             # Must await the token exchange in FastAPI
             token = await self.dataone_oidc.authorize_access_token(request)
@@ -449,7 +618,25 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
             return self.error_handler(e)
 
     async def refresh(self, request_json: dict):
-        """Logic to handle refresh token exchange."""
+        """Asynchronously exchanges a refresh token for new access tokens.
+
+        Overrides the synchronous base method to accommodate FastAPI's async 
+        token fetching. 
+
+        Args:
+            request_json: A dictionary (typically the parsed JSON body of the 
+                          request) containing at least a 'refresh_token'.
+
+        Returns:
+            A JSONResponse containing the new access and refresh tokens, or an 
+            error response if the token is missing or invalid.
+
+        Example:
+            @app.post("/refresh")
+            async def refresh(request: Request):
+                body = await request.json()
+                return await auth_adapter.refresh(body)
+        """
         refresh_token = request_json.get("refresh_token")
         if not refresh_token:
             # This triggers our mapped TokenExtractionError (401)
@@ -472,10 +659,38 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
             return self.error_handler(e)
 
     def require_scope(self, required_scope: str):
-        """Returns a dependency for FastAPI's Depends()."""
+        """Creates a FastAPI dependency to enforce scope requirements on routes.
+
+        This method returns an async function designed to be injected into FastAPI 
+        endpoints using `Depends()`. It extracts the token, validates it against 
+        the requested scope, and returns the claims. If the adapter's access mode 
+        is not set to 'authenticated' (e.g., 'read_only'), validation is bypassed.
+
+        Args:
+            required_scope: The specific OAuth scope required to access the route 
+                            (e.g., "read:data" or "write:admin").
+
+        Returns:
+            An asynchronous callable dependency that returns validated token claims.
+
+        Raises:
+            fastapi.HTTPException: If token validation fails. The internal exception 
+                                   is translated into a standard FastAPI HTTP error 
+                                   using the adapter's error handler.
+
+        Example:
+            from fastapi import Depends
+            
+            @app.get("/secure-data")
+            async def get_secure_data(
+                    claims: dict = Depends(auth_adapter.require_scope("read:data"))
+            ):
+                return {"message": "Access granted", "user": claims.get("sub")}
+        """
         from fastapi import Request
         async def dependency(request: Request):
             from fastapi import HTTPException
+
             from .auth import extract_token_from_header
             # Handle 'read_only' logic
             if self.access_mode != "authenticated":
@@ -498,10 +713,24 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
 class FlaskAuthAdapter(BaseAuthAdapter):
     def _initialize_oauth(self):
+        """Initializes the Flask-based OAuth registry.
+        
+        Sets the internal response class to FastAPI's JSONResponse and returns 
+        the instantiated Authlib OAuth object.
+        """
         from authlib.integrations.flask_client import OAuth
         return OAuth()
 
     def error_handler(self, exc: Exception):
+        """Formats an exception into a Flask JSON response.
+        
+        Args:
+            exc: The exception caught during authentication or request processing.
+
+        Returns:
+            A flask.Response object containing the resolved HTTP status code 
+            and formatted error payload.
+        """
         from flask import jsonify
         msg, code = self._resolve_error(exc)
         return jsonify({
@@ -512,6 +741,18 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         }), code
 
     def token_response(self, token: dict, message: str = "Success"):
+        """Formats successful token data into a Flask JSON response.
+        
+        Args:
+            token: A dictionary containing the token data (must include at least 
+                   'access_token' and 'refresh_token' keys).
+            message: An optional success message to include in the response payload. 
+                     Defaults to "Success".
+
+        Returns:
+            A flask.Response object with a 200 status code and the standardized 
+            token payload.
+        """
         from flask import jsonify
         return jsonify({
             "message": message,
@@ -522,26 +763,104 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         }), 200
 
     def login(self, redirect_uri: str):
+        """Initiates the OIDC login flow for Flask.
+
+        Uses the Flask Authlib client to generate a redirect response that 
+        sends the user to the authorization server.
+
+        Args:
+            redirect_uri: The callback URL where the authorization server will 
+                          redirect the user after authentication.
+
+        Returns:
+            A Flask Response object (redirect) pointing to the OIDC provider.
+
+        Example:
+            @app.route("/login")
+            def login():
+                return auth_client.login(
+                    redirect_uri=url_for("authorize", _external=True)
+                )
+        """
         return self.dataone_oidc.authorize_redirect(redirect_uri)
 
     def authorize(self):
+        """Exchanges an authorization code for an access token in Flask.
+
+        This method should be called within the OIDC callback route. It 
+        automatically handles the code exchange by accessing the global 
+        Flask request object.
+
+        Returns:
+            A Flask Response object (JSON) containing the tokens on success, 
+            or a formatted error response on failure.
+
+        Example:
+            @app.route("/authorize")
+            def authorize():
+                return auth_client.authorize()
+        """
         try:
             token = self.dataone_oidc.authorize_access_token()
             return self.token_response(token)
         except Exception as e:
             return self.error_handler(e)
 
-    def _do_refresh(self, refresh_token, scope=None):
+    def refresh(self, request_json: dict):
+        """Executes the synchronous token refresh request for Flask.
+
+        Args:
+            request_json: A dictionary (the parsed JSON body) containing 
+                          at least a 'refresh_token'.
+
+        Returns:
+            A Flask Response object (JSON) containing the new tokens or 
+            an error response if the exchange fails.
+            
+        Example:
+            @app.route("/refresh", methods=["POST"])
+            def refresh_route():
+                return auth_adapter.refresh(request.get_json())
+        """
+        refresh_token = request_json.get("refresh_token")
+        if not refresh_token:
+            # We return the error handler result instead of raising 
+            # to match the Flask return-style flow.
+            return self.error_handler(TokenExtractionError("Missing refresh_token"))
+        
+        scope = request_json.get("scope")
         try:
             kwargs = {"grant_type": "refresh_token", "refresh_token": refresh_token}
             if scope:
                 kwargs["scope"] = scope
+            
             new_tokens = self.dataone_oidc.fetch_access_token(**kwargs)
-            return self.token_response(new_tokens)
+            return self.token_response(new_tokens, message="Token refresh successful")
         except Exception as e:
             return self.error_handler(e)
 
     def require_scope(self, required_scope: str):
+        """Creates a Flask decorator to enforce scope requirements on routes.
+
+        This method returns a decorator that extracts the Bearer token from the 
+        'Authorization' header, validates it, and injects the resulting claims 
+        into the decorated function as the first argument. If the adapter is in 
+        'read_only' or 'open' mode, validation is bypassed and 'None' is passed 
+        for the claims.
+
+        Args:
+            required_scope: The specific OAuth scope required to access the route 
+                            (e.g., "read:data").
+
+        Returns:
+            A decorator function that wraps a Flask route handler.
+
+        Example:
+            @app.route("/secure-data")
+            @auth_adapter.require_scope("read:data")
+            def get_secure_data(claims):
+                return {"message": "Access granted", "user": claims.get("sub")}
+        """
         def decorator(f):
             @functools.wraps(f)
             def decorated(*args, **kwargs):
