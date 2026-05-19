@@ -44,8 +44,6 @@ _ORCID_HTTP_PREFIX = "http://orcid.org/"
 class AuthError(Exception):
     """Base exception for dataone-auth."""
 
-    pass
-
 
 class MissingParameterError(AuthError):
     """Raised when a required request parameter is missing."""
@@ -54,23 +52,17 @@ class MissingParameterError(AuthError):
 class InsufficientScopeError(AuthError):
     """Raised when the token is valid but doesn't have the right scope."""
 
-    pass
-
 
 class TokenExtractionError(AuthError):
     """Raised when the Authorization header is missing or malformed."""
-
-    pass
 
 
 class InvalidTokenError(AuthError):
     """Raised when claims like iss or aud do not match expectations."""
 
-    pass
-
 
 class ConfigurationError(AuthError):
-    pass
+    """Raised when there is an issue with the configuration."""
 
 
 ### Helpers
