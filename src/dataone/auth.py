@@ -286,8 +286,8 @@ class BaseAuthAdapter:
 
     ERROR_MAP = {
         TokenExtractionError: ("Invalid token or header", 401),
-        JoseError: ("Token decoding or signature verification failed", 401),  # <- New
-        InvalidTokenError: ("Token validation failed", 401),  # <- Now your custom error
+        JoseError: ("Token decoding or signature verification failed", 401),
+        InvalidTokenError: ("Token validation failed", 401),
         InvalidClientError: ("OIDC client authentication failed", 401),
         InvalidGrantError: ("Invalid or expired refresh token", 401),
         OAuthError: ("Authorization failed", 401),
@@ -297,6 +297,7 @@ class BaseAuthAdapter:
         MissingParameterError: ("Missing required parameter", 400),
         ValueError: ("OIDC provider configuration error", 500),
         RequestException: ("Failed to fetch OIDC provider keys", 502),
+        InsufficientScopeError: ("Insufficient scope", 403)
     }
 
     def __init__(self, secrets, scopes):
@@ -692,7 +693,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self._error_handler(e)
 
-    def require_scope(self, required_scope: str, methods=None):
+    def require_scope(self, required_scope: str, methods = None):
         """Creates a FastAPI dependency to enforce scope requirements on routes.
 
         This method returns an async function designed to be injected into FastAPI
@@ -733,6 +734,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
             # Handle 'read_only' logic
             if self.access_mode != "authenticated":
+                return None
+            
+            if methods is not None and request.method not in methods:
                 return None
 
             try:
@@ -940,7 +944,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self._error_handler(e)
 
-    def require_scope(self, required_scope: str, methods: None):
+    def require_scope(self, required_scope: str, methods = None):
         """Creates a Flask decorator to enforce scope requirements on routes.
 
         This method returns a decorator that extracts the Bearer token from the
