@@ -11,10 +11,13 @@ response formatting. This design allows for flexible integration with different 
 web frameworks without hard dependencies on any particular framework.
 """
 
+import base64
+import datetime as dt
 import functools
 import json
 import os
 import re
+from typing import Any
 
 import httpx
 import requests
@@ -217,6 +220,74 @@ def decode_claims(token_str, jwks, client_id, issuer):
 
     return claims
 
+def is_token_valid(token: str | None, buffer_minutes: int = 1) -> bool:
+    """Check if a JWT token unexpired.
+
+    Args:
+        token: The raw JWT string to validate.
+        buffer_minutes: A safety margin added to the current time to account for network
+                        lag.
+
+    Returns:
+        True if the token is valid and unexpired, False (or None if parsing fails).
+    """
+    if not token:
+        return False
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        payload = parts[1]
+        payload += "=" * ((4 - len(payload) % 4) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8")).get("exp")
+    except Exception:
+        return None
+
+    if not exp:
+        return False
+    expiry_time = dt.datetime.fromtimestamp(exp, tz=dt.UTC)
+    e = expiry_time > (dt.datetime.now(dt.UTC) + dt.timedelta(minutes=buffer_minutes))
+    return e
+
+def parse_tokens_dict(tokens: str | dict[str, Any]) -> dict[str, str]:
+    """Parse and normalize a raw token payload into a validated dictionary.
+
+    Args:
+        tokens: A raw JSON string or dictionary containing OIDC tokens.
+
+    Returns:
+        A dictionary containing verified 'access_token' and/or 'refresh_token' keys.
+
+    Raises:
+        ValueError: If the input is malformed, missing key fields, or contains empty 
+                    strings.
+    """
+    if isinstance(tokens, str):
+        try:
+            tokens = json.loads(tokens)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"'tokens' could not be parsed as JSON: {e}")
+
+    if not isinstance(tokens, dict):
+        raise ValueError("'tokens' must be a dictionary or a JSON string")
+
+    if "token" in tokens and isinstance(tokens["token"], dict):
+        tokens = tokens["token"]
+
+    if not any(key in tokens for key in ("access_token", "refresh_token")):
+        raise ValueError(
+            "'tokens' must contain at least one of 'access_token' or 'refresh_token'"
+        )
+
+    normalized: dict[str, str] = {}
+    for key in ("access_token", "refresh_token"):
+        if key in tokens and tokens[key] is not None:
+            val = tokens[key]
+            if not isinstance(val, str) or len(val.strip()) == 0:
+                raise ValueError(f"'{key}' must be a non-empty string")
+            normalized[key] = val
+
+    return normalized
 
 ### Factory
 
