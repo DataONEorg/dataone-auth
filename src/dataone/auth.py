@@ -241,7 +241,7 @@ def is_token_valid(token: str | None, buffer_minutes: int = 1) -> bool:
         payload += "=" * ((4 - len(payload) % 4) % 4)
         exp = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8")).get("exp")
     except Exception:
-        return None
+        return False
 
     if not exp:
         return False
@@ -288,6 +288,28 @@ def parse_tokens_dict(tokens: str | dict[str, Any]) -> dict[str, str]:
             normalized[key] = val
 
     return normalized
+
+def refresh_tokens(refresh_url: str,
+                   refresh_token: str,
+                   session: requests.Session | None = None) -> dict:
+    """Exchange a refresh token for a new token payload.
+
+    Args:
+        refresh_url: The API endpoint URL used for token renewal.
+        refresh_token: The OIDC refresh token string.
+        session: An optional requests session to use for the network request.
+
+    Returns:
+        A dictionary containing the fresh token payload.
+
+    Raises:
+        requests.exceptions.HTTPError: If the server returns an unsuccessful status
+                                    code.
+    """
+    client = session or requests.Session()
+    response = client.post(refresh_url, json={"refresh_token": refresh_token})
+    response.raise_for_status()
+    return response.json()
 
 ### Factory
 
