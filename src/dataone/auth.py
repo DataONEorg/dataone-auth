@@ -229,14 +229,14 @@ def is_token_valid(token: str | None, buffer_minutes: int = 1) -> bool:
                         lag.
 
     Returns:
-        True if the token is valid and unexpired, False (or None if parsing fails).
+        True if the token is valid and unexpired, False otherwise.
     """
     if not token:
         return False
     try:
         parts = token.split(".")
         if len(parts) < 2:
-            return None
+            return False
         payload = parts[1]
         payload += "=" * ((4 - len(payload) % 4) % 4)
         exp = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8")).get("exp")
