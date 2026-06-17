@@ -825,12 +825,18 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
             from .auth import extract_token_from_header
 
-            # Handle 'read_only' logic
-            if self.access_mode != "authenticated":
-                return None
+            # Handle 'open' logic
+            if self.access_mode == ACCESS_MODE_OPEN:
+                return {}
             
-            if methods is not None and request.method not in methods:
-                return None
+            # Handle 'read only' logic
+            if self.access_mode == ACCESS_MODE_READ_ONLY:
+                if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+                    raise HTTPException(
+                        status_code=403, 
+                        detail="This API is currently in read-only mode."
+                    )
+                return {}
 
             try:
                 auth_header = request.headers.get("Authorization")
@@ -885,12 +891,18 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
             from .auth import extract_token_from_header
 
-            # Handle 'read_only' logic
-            if self.access_mode != "authenticated":
-                return None
-
-            if methods is not None and request.method not in methods:
-                return None
+            # Handle 'open' logic
+            if self.access_mode == ACCESS_MODE_OPEN:
+                return {}
+            
+            # Handle 'read only' logic
+            if self.access_mode == ACCESS_MODE_READ_ONLY:
+                if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+                    raise HTTPException(
+                        status_code=403, 
+                        detail="This API is currently in read-only mode."
+                    )
+                return {}
 
             try:
                 auth_header = request.headers.get("Authorization")
