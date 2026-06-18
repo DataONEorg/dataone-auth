@@ -100,7 +100,7 @@ def load_client_secrets(filepath: str | None = None) -> dict:
         raise ConfigurationError(f"OIDC secrets file at {resolved} is not valid JSON")
 
 
-def extract_token_from_header(auth_header: str):
+def extract_token_from_header(auth_header: str | None):
     """Extracts and validates a Bearer token from an auth header string.
 
     Args:
@@ -450,7 +450,7 @@ class BaseAuthAdapter:
 
         return "Internal authentication error", 500
 
-    def _verify_scope(self, claims: dict, required_scope: str | None):
+    def _verify_scope(self, claims: dict, required_scope: str | None = None):
         """Internal helper to check if the required scope exists in claims."""
         if not required_scope:
             return
@@ -526,7 +526,9 @@ class BaseAuthAdapter:
 
         return decode_claims(token_str, jwks, client_id, issuer)
 
-    def validate_and_extract_claims(self, token_str: str, required_scope: str = None):
+    def validate_and_extract_claims(self,
+                                    token_str: str,
+                                    required_scope: str | None = None):
         """Validate a token string and optionally check required scope.
 
         Args:
@@ -548,7 +550,7 @@ class BaseAuthAdapter:
 
         return claims
 
-    def login(self, redirect_uri: str, request=None):
+    def login(self, redirect_uri: str, request=None) -> Any:
         """This is implemented by subclasses."""
         raise NotImplementedError
 
@@ -675,9 +677,9 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
         return decode_claims(token_str, jwks, client_id, issuer)
 
-    async def validate_and_extract_claims(
-        self, token_str: str, required_scope: str = None
-    ):
+    async def validate_and_extract_claims(self,
+                                          token_str: str,
+                                          required_scope: str | None = None):
         """Asynchronously decodes and validates a JWT using the provider's JWKS.
 
         This overrides the base method to support Starlette/FastAPI's asynchronous
@@ -697,7 +699,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
         return claims
 
-    async def login(self, request, redirect_uri: str):
+    async def login(self, redirect_uri: str, request: Any = None) -> Any:
         """Asynchronously initiates the OIDC login flow.
 
         Uses the Starlette OAuth client to generate a redirect response that
@@ -823,8 +825,6 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         async def dependency(request: Request):
             from fastapi import HTTPException
 
-            from .auth import extract_token_from_header
-
             # Handle 'open' logic
             if self.access_mode == ACCESS_MODE_OPEN:
                 return {}
@@ -888,8 +888,6 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
 
         async def dependency(request: Request):
             from fastapi import HTTPException
-
-            from .auth import extract_token_from_header
 
             # Handle 'open' logic
             if self.access_mode == ACCESS_MODE_OPEN:
@@ -972,7 +970,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
             }
         ), 200
 
-    def login(self, redirect_uri: str):
+    def login(self, redirect_uri: str, request: Any = None) -> Any:
         """Initiates the OIDC login flow for Flask.
 
         Uses the Flask Authlib client to generate a redirect response that
