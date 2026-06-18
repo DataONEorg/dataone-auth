@@ -554,11 +554,11 @@ class BaseAuthAdapter:
         """This is implemented by subclasses."""
         raise NotImplementedError
 
-    def authorize(self, request=None):
+    def authorize(self, request=None) -> Any:
         """This is implemented by subclasses."""
         raise NotImplementedError
 
-    def refresh(self, request_json: dict):
+    def refresh(self, request_json: dict) -> Any:
         """This is implemented by subclasses."""
         raise NotImplementedError
 
@@ -724,7 +724,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         # The Starlette client's authorize_redirect is async
         return await self.dataone_oidc.authorize_redirect(request, redirect_uri)
 
-    async def authorize(self, request):
+    async def authorize(self, request) -> Any: # type: ignore[override]
         """Asynchronously exchanges an authorization code for an access token.
 
         This method is designed to be used in the OIDC callback route. It
@@ -750,7 +750,7 @@ class FastAPIAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self._error_handler(e)
 
-    async def refresh(self, request_json: dict):
+    async def refresh(self, request_json: dict) -> Any:
         """Asynchronously exchanges a refresh token for new access tokens.
 
         Overrides the synchronous base method to accommodate FastAPI's async
@@ -992,7 +992,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         """
         return self.dataone_oidc.authorize_redirect(redirect_uri)
 
-    def authorize(self):
+    def authorize(self) -> Any: # type: ignore[override]
         """Exchanges an authorization code for an access token in Flask.
 
         This method should be called within the OIDC callback route. It
@@ -1014,7 +1014,7 @@ class FlaskAuthAdapter(BaseAuthAdapter):
         except Exception as e:
             return self._error_handler(e)
 
-    def refresh(self, request_json: dict):
+    def refresh(self, request_json: dict) -> Any:
         """Executes the synchronous token refresh request for Flask.
 
         Args:
