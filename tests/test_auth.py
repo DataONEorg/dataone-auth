@@ -118,12 +118,12 @@ def test_decode_claims_success():
     raw_key = RSAKey.generate_key(2048)
     
     # export to dict and strictly set a string 'kid'
-    private_jwk = raw_key.as_dict(is_private=True)
+    private_jwk = raw_key.as_dict(private=True)
     private_jwk['kid'] = 'test-key-id-1'
     
     # re-import the key so it officially has the kid, and create the public JWKS
     key = RSAKey.import_key(private_jwk)
-    public_jwk = KeySet.import_key_set({"keys": [key.as_dict(is_private=False)]})
+    public_jwk = KeySet.import_key_set({"keys": [key.as_dict(private=False)]})
     
     # setup mock claims/headers
     header = {'alg': 'RS256', 'kid': 'test-key-id-1'}
@@ -153,11 +153,11 @@ def test_decode_claims_success():
 def test_decode_claims_invalid_issuer():
     raw_key = RSAKey.generate_key(2048)
     
-    private_jwk = raw_key.as_dict(is_private=True)
+    private_jwk = raw_key.as_dict(private=True)
     private_jwk['kid'] = 'test-key-id-2'
     
     key = RSAKey.import_key(private_jwk)
-    public_jwk = KeySet.import_key_set({"keys": [key.as_dict(is_private=False)]})
+    public_jwk = KeySet.import_key_set({"keys": [key.as_dict(private=False)]})
     
     # token has 'wrong-issuer'
     header = {'alg': 'RS256', 'kid': 'test-key-id-2'}
