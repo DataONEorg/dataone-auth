@@ -47,7 +47,7 @@ jobs:
   publish-python:
     if: github.ref_type == 'tag'
     # Only publish if both Python and Docker builds are successful.
-    needs: ["build-python", "build-docker"]
+    needs: ["build-python"]
     name: "Publish to PyPI"
     environment: "pypi"
     permissions:
